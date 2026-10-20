@@ -1,0 +1,90 @@
+/*
+ * Variables de diseño: colores, tipografía y radios.
+ * Los componentes solo usan estas variables, nunca colores sueltos.
+ * El tema oscuro se activa solo según el teléfono o la computadora.
+ */
+:root {
+  /* Superficies y texto */
+  --fondo: #edf0f5;
+  --superficie: #ffffff;
+  --superficie-2: #f5f7fa;
+  --linea: #d8dee8;
+  --linea-fuerte: #b9c2d2;
+  --texto: #101828;
+  --texto-suave: #566178;
+  --texto-tenue: #8a94a8;
+
+  /* Marca: azul cobalto de la bandera y amarillo maíz */
+  --acento: #1446b8;
+  --acento-suave: #e6ecfa;
+  --sobre-acento: #ffffff;
+  --maiz: #e9b03b;
+  --tinta-maiz: #2a1e05;
+
+  /* Resumen principal */
+  --resumen-fondo: #1446b8;
+  --resumen-texto: #ffffff;
+  --resumen-suave: #c9d6f5;
+  --resumen-pista: rgba(255, 255, 255, 0.18);
+
+  /* Estados */
+  --bien: #1d7f4e;
+  --bien-fondo: #e3f3ea;
+  --aviso: #9a6408;
+  --aviso-fondo: #fbf0d9;
+  --mal: #b3322a;
+  --mal-fondo: #fbe6e3;
+
+  /* Colores de tarjetas de crédito */
+  --tarjeta-cobalto: #1446b8;
+  --tarjeta-vino: #7a1f3d;
+  --tarjeta-bosque: #1d5c45;
+  --tarjeta-grafito: #2a3142;
+  --tarjeta-maiz: #e2a93a;
+  --tarjeta-texto: #ffffff;
+  --tarjeta-pista: rgba(255, 255, 255, 0.25);
+
+  --velo: rgba(12, 18, 32, 0.48);
+  --sombra: 0 1px 2px rgba(16, 24, 40, 0.06), 0 6px 20px rgba(16, 24, 40, 0.06);
+
+  /* Tipografía */
+  --fuente-titulos: 'Archivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --fuente-texto: 'Archivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --fuente-datos: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* Radios */
+  --radio-grande: 18px;
+  --radio: 12px;
+  --radio-chico: 8px;
+
+  --ancho-maximo: 760px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fondo: #0b101b;
+    --superficie: #131a29;
+    --superficie-2: #192132;
+    --linea: #253049;
+    --linea-fuerte: #33405e;
+    --texto: #e7ecf5;
+    --texto-suave: #9aa5bc;
+    --texto-tenue: #6e7891;
+    --acento: #7fa3ff;
+    --acento-suave: #18264a;
+    --sobre-acento: #0b101b;
+    --maiz: #f0bd52;
+    --resumen-fondo: #1b3c94;
+    --resumen-suave: #bacbf2;
+    --resumen-pista: rgba(255, 255, 255, 0.16);
+    --bien: #52c48c;
+    --bien-fondo: #12301f;
+    --aviso: #e9b551;
+    --aviso-fondo: #33270e;
+    --mal: #f2766a;
+    --mal-fondo: #3a1a17;
+    --velo: rgba(0, 0, 0, 0.6);
+    --sombra: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
+    color-scheme: dark;
+  }
+}

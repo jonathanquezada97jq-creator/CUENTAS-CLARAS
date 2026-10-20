@@ -1,0 +1,567 @@
+/*
+ * Piezas propias de cada pestaña: resumen de Inicio, tarjetas de crédito,
+ * cuotas, boleta de salario y pantallas de entrada.
+ */
+
+/* ---------- Inicio: resumen del mes (forma de boleta perforada) ---------- */
+
+.resumen {
+  position: relative;
+  background: var(--resumen-fondo);
+  color: var(--resumen-texto);
+  border-radius: var(--radio-grande) var(--radio-grande) 6px 6px;
+  padding: 18px 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resumen::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -5px;
+  height: 10px;
+  background: radial-gradient(circle, var(--fondo) 3.6px, transparent 4.2px) 0 0 / 13px 10px
+    repeat-x;
+}
+
+.resumen .etiqueta {
+  color: var(--resumen-suave);
+}
+
+.resumen__cifra {
+  font-family: var(--fuente-titulos);
+  font-stretch: 115%;
+  font-weight: 850;
+  font-size: clamp(40px, 11vw, 58px);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.resumen__cifra--falta {
+  color: var(--maiz);
+}
+
+.resumen__centavos {
+  font-size: 0.5em;
+  letter-spacing: 0;
+  vertical-align: 0.62em;
+  margin-left: 2px;
+  opacity: 0.85;
+}
+
+.resumen__detalle {
+  color: var(--resumen-suave);
+  font-size: 13.5px;
+}
+
+.resumen__detalle b {
+  color: var(--resumen-texto);
+  font-weight: 650;
+}
+
+.resumen__barra {
+  display: flex;
+  height: 10px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: var(--resumen-pista);
+  margin-top: 6px;
+}
+
+.resumen__barra span {
+  display: block;
+  height: 100%;
+}
+
+.resumen__leyenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 12px;
+  color: var(--resumen-suave);
+}
+
+.resumen__leyenda span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.resumen__leyenda i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.segmento--pagado { background: var(--resumen-texto); }
+.segmento--pendiente { background: var(--maiz); }
+.segmento--gastos { background: var(--resumen-suave); opacity: 0.65; }
+
+/* ---------- Inicio: cifras ---------- */
+
+.cifras {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+@media (min-width: 620px) {
+  .cifras {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.cifra {
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
+  padding: 13px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cifra__valor {
+  font-family: var(--fuente-titulos);
+  font-stretch: 110%;
+  font-weight: 780;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.cifra__valor small {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--texto-suave);
+  font-stretch: 100%;
+  letter-spacing: 0;
+}
+
+.cifra p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--texto-suave);
+}
+
+/* ---------- Pagos: navegación por mes y categorías ---------- */
+
+.navegador-mes {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.navegador-mes h1 {
+  flex: 1;
+  text-align: center;
+  margin: 0;
+  font-family: var(--fuente-titulos);
+  font-stretch: 118%;
+  font-weight: 830;
+  font-size: 22px;
+  text-transform: capitalize;
+}
+
+.categorias {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.categoria {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  font-size: 13.5px;
+}
+
+.categoria__barra {
+  grid-column: 1 / -1;
+  height: 7px;
+  border-radius: 99px;
+  background: var(--superficie-2);
+  overflow: hidden;
+}
+
+.categoria__barra span {
+  display: block;
+  height: 100%;
+  background: var(--acento);
+  border-radius: 99px;
+}
+
+/* ---------- Tarjetas de crédito ---------- */
+
+.tarjetas {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+@media (min-width: 640px) {
+  .tarjetas {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.tarjeta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tarjeta__frente {
+  border-radius: 14px;
+  padding: 16px;
+  color: var(--tarjeta-texto);
+  background: var(--tarjeta-cobalto);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 168px;
+  position: relative;
+  overflow: hidden;
+}
+
+.tarjeta__frente::before {
+  content: '';
+  position: absolute;
+  right: -40px;
+  top: -60px;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  border: 26px solid rgba(255, 255, 255, 0.07);
+}
+
+.tarjeta__frente--vino { background: var(--tarjeta-vino); }
+.tarjeta__frente--bosque { background: var(--tarjeta-bosque); }
+.tarjeta__frente--grafito { background: var(--tarjeta-grafito); }
+.tarjeta__frente--maiz { background: var(--tarjeta-maiz); color: var(--tinta-maiz); }
+
+.tarjeta__arriba {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+  position: relative;
+}
+
+.tarjeta__banco {
+  font-family: var(--fuente-datos);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.tarjeta__nombre {
+  font-family: var(--fuente-titulos);
+  font-stretch: 112%;
+  font-weight: 760;
+  font-size: 17px;
+  margin-top: 2px;
+}
+
+.tarjeta__numero {
+  font-family: var(--fuente-datos);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  opacity: 0.9;
+}
+
+.tarjeta__saldo {
+  margin-top: auto;
+  position: relative;
+}
+
+.tarjeta__saldo-etiqueta {
+  font-family: var(--fuente-datos);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.tarjeta__saldo-valor {
+  font-family: var(--fuente-titulos);
+  font-stretch: 112%;
+  font-weight: 820;
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.tarjeta__saldo-valor small {
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.tarjeta__uso {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--tarjeta-pista);
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.tarjeta__uso span {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  border-radius: 99px;
+}
+
+.tarjeta__cuerpo {
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-top: 0;
+  border-radius: 0 0 14px 14px;
+  margin-top: -10px;
+  padding: 20px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tarjeta__acciones {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.datos {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.datos div {
+  min-width: 0;
+}
+
+.datos__nombre {
+  font-family: var(--fuente-datos);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+}
+
+.datos__valor {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+
+/* ---------- Cuotas ---------- */
+
+.plazos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plazo {
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
+  padding: 13px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.plazo__arriba {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.plazo__titulo {
+  font-weight: 680;
+  font-size: 15.5px;
+  overflow-wrap: anywhere;
+}
+
+.plazo__detalle {
+  font-size: 12.5px;
+  color: var(--texto-suave);
+}
+
+.plazo__cuotas {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.plazo__cuotas i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--superficie-2);
+  border: 1px solid var(--linea-fuerte);
+}
+
+.plazo__cuotas i.pagada {
+  background: var(--acento);
+  border-color: var(--acento);
+}
+
+.plazo__pie {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 14px;
+  font-size: 13px;
+  color: var(--texto-suave);
+}
+
+.plazo__pie b {
+  color: var(--texto);
+  font-variant-numeric: tabular-nums;
+}
+
+.terminados summary {
+  cursor: pointer;
+  color: var(--texto-suave);
+  font-size: 13.5px;
+  padding: 6px 0;
+}
+
+/* ---------- Ingresos: persona y boleta ---------- */
+
+.persona {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.persona__cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.persona__nombre {
+  margin: 0;
+  font-family: var(--fuente-titulos);
+  font-stretch: 112%;
+  font-weight: 780;
+  font-size: 17px;
+}
+
+.boleta {
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio);
+  padding: 14px 16px;
+  font-family: var(--fuente-datos);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.boleta__encabezado {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--linea-fuerte);
+}
+
+.boleta__linea {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.boleta__concepto {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.boleta__puntos {
+  flex: 1 1 20px;
+  border-bottom: 1px dotted var(--linea-fuerte);
+  transform: translateY(-3px);
+  min-width: 14px;
+}
+
+.boleta__valor {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.boleta__linea--resta .boleta__valor { color: var(--mal); }
+.boleta__linea--suave { color: var(--texto-suave); }
+
+.boleta__linea--total {
+  font-weight: 600;
+  font-size: 14px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--linea-fuerte);
+}
+
+.boleta__linea--total .boleta__valor {
+  font-family: var(--fuente-titulos);
+  font-stretch: 110%;
+  font-weight: 800;
+  font-size: 18px;
+}
+
+/* ---------- Pantallas de entrada (sin sesión, sin permiso…) ---------- */
+
+.pantalla {
+  min-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 16px;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.pantalla h1 {
+  margin: 0;
+  font-family: var(--fuente-titulos);
+  font-stretch: 120%;
+  font-weight: 850;
+  font-size: clamp(30px, 8vw, 40px);
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  text-wrap: balance;
+}
+
+.pantalla p {
+  margin: 0;
+  color: var(--texto-suave);
+  font-size: 15px;
+}
+
+.pantalla code {
+  font-family: var(--fuente-datos);
+  font-size: 13px;
+  background: var(--superficie-2);
+  border: 1px solid var(--linea);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
