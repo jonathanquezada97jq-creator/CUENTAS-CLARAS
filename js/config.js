@@ -10,12 +10,12 @@
  * dejan entrar a los correos que vos escribás ahí.
  */
 export const FIREBASE_CONFIG = {
-  apiKey: 'PEGA_AQUI_TU_API_KEY',
-  authDomain: 'TU-PROYECTO.firebaseapp.com',
-  projectId: 'TU-PROYECTO',
-  storageBucket: 'TU-PROYECTO.appspot.com',
-  messagingSenderId: '000000000000',
-  appId: '1:000000000000:web:0000000000000000',
+  apiKey: "AIzaSyAwo_a5Rz4g236H7NJ8Gz_O8eGAdcwazAQ",
+  authDomain: "cuentas-claras-2811.firebaseapp.com",
+  projectId: "cuentas-claras-2811",
+  storageBucket: "cuentas-claras-2811.firebasestorage.app",
+  messagingSenderId: "535157134123",
+  appId: "1:535157134123:web:6d077a5362590aa051ab6e"
 };
 
 /**
