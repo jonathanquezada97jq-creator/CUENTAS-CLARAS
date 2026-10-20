@@ -1,0 +1,14 @@
+{
+  "name": "cuentas-claras",
+  "version": "2.0.0",
+  "description": "Finanzas del hogar para El Salvador: salarios con ISSS, AFP y renta, tarjetas, cuotas y pagos del mes, compartidas entre dos personas.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "npx --yes serve@14.2.3 -l 8080 ."
+  }
+}

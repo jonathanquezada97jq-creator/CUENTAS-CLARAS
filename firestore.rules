@@ -1,0 +1,36 @@
+rules_version = '2';
+
+// Reglas de seguridad de Firestore.
+//
+// Solo las cuentas de Google de esta lista pueden leer o escribir los datos
+// del hogar. Cualquier otra persona que abra la página ve la pantalla de
+// entrada, pero no puede ver ni cambiar nada.
+//
+// Cómo aplicarlas: Consola de Firebase → Firestore Database → Reglas →
+// pegar este archivo (con los correos reales) → Publicar.
+//
+// Si el repositorio de GitHub es público, podés dejar aquí los correos de
+// ejemplo y escribir los reales solo en la consola de Firebase.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function esDelHogar() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in [
+          'TU_CORREO@gmail.com',
+          'CORREO_DE_TU_ESPOSA@gmail.com'
+        ];
+    }
+
+    match /hogares/{hogar}/{documento=**} {
+      allow read, write: if esDelHogar();
+    }
+
+    // Todo lo demás queda cerrado.
+    match /{documento=**} {
+      allow read, write: if false;
+    }
+  }
+}
