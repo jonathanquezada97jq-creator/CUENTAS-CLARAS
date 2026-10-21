@@ -195,14 +195,17 @@ export function eliminarRegistro(coleccion, id) {
 
 /**
  * Marca o desmarca un pago. Todo lo que cambia (el mes, el saldo de la
- * tarjeta, las cuotas) se escribe junto en un solo lote.
- * Los saldos y cuotas usan `increment` para que dos personas puedan
+ * tarjeta, lo abonado a la cuota) se escribe junto en un solo lote.
+ * Los saldos y abonos usan `increment` para que dos personas puedan
  * marcar cosas al mismo tiempo sin pisarse.
+ * @param {string} mes
+ * @param {string} clave
+ * @param {import('../domain/presupuesto.js').DetalleDePago} [detalle]
  * @returns {import('../domain/presupuesto.js').PlanDePago|null}
  */
-export function alternarPago(mes, clave) {
-  const plan = planificarPago(leer().datos, mes, clave, inicioDelDia());
-  if (!plan) return null;
+export function alternarPago(mes, clave, detalle) {
+  const plan = planificarPago(leer().datos, mes, clave, inicioDelDia(), detalle);
+  if (!plan || plan.bloqueado) return plan;
 
   const pagados = {};
   Object.entries(plan.pagados).forEach(([k, valor]) => {
@@ -214,9 +217,12 @@ export function alternarPago(mes, clave) {
   plan.tarjetas.forEach(({ id, deltaSaldo }) =>
     lote.update(refDocumento('tarjetas', id), { saldo: increment(deltaSaldo) }),
   );
-  plan.plazos.forEach(({ id, deltaPagadas }) =>
-    lote.update(refDocumento('plazos', id), { pagadas: increment(deltaPagadas) }),
-  );
+  plan.plazos.forEach(({ id, deltaAbonado, deltaPagadas }) => {
+    const cambios = {};
+    if (deltaAbonado) cambios.abonado = increment(deltaAbonado);
+    if (deltaPagadas) cambios.pagadas = increment(deltaPagadas);
+    lote.update(refDocumento('plazos', id), cambios);
+  });
   sinEsperar(lote.commit());
   return plan;
 }

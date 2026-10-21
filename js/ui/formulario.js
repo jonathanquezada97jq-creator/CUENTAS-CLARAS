@@ -6,10 +6,12 @@
  *   { nombre: 'limite', etiqueta: 'Límite de crédito', tipo: 'dinero', requerido: true, medio: true }
  *
  * Tipos: 'texto' (por defecto), 'dinero', 'entero', 'dia', 'porcentaje',
- *        'fecha', 'lista', 'casilla', 'colores'.
+ *        'fecha', 'lista', 'opciones' (botones para elegir uno), 'casilla', 'colores'.
  * Opcionales: ayuda, sugerencias (lista para autocompletar), opciones (para
- *   'lista' y 'colores'), porDefecto, maximo (largo del texto),
- *   medio (ocupa media fila), mostrarSi: ['otroCampo', 'valor'].
+ *   'lista', 'opciones' y 'colores'; en 'opciones' cada una puede llevar un
+ *   tercer valor que se muestra a la derecha, como un monto), porDefecto,
+ *   maximo (largo del texto), medio (ocupa media fila),
+ *   mostrarSi: ['otroCampo', 'valor'] o ['otroCampo', ['valor1', 'valor2']].
  */
 import { aNumero, escaparHtml as esc } from '../utils/formato.js';
 import { abrirHoja, cerrarHoja } from './hoja.js';
@@ -59,9 +61,20 @@ function htmlCampo(campo, valorGuardado) {
   const id = `campo-${campo.nombre}`;
   const vacio = valorGuardado === undefined || valorGuardado === null || valorGuardado === '';
   const valor = vacio ? (campo.porDefecto ?? '') : valorGuardado;
+  const valoresQueMuestran = campo.mostrarSi ? [].concat(campo.mostrarSi[1]).join('|') : '';
   const condicion = campo.mostrarSi
-    ? ` data-mostrar-si="${campo.mostrarSi[0]}" data-valor="${esc(campo.mostrarSi[1])}"`
+    ? ` data-mostrar-si="${campo.mostrarSi[0]}" data-valor="${esc(valoresQueMuestran)}"`
     : '';
+
+  if (campo.tipo === 'opciones') {
+    const botones = paresDeOpciones(campo.opciones)
+      .map(
+        ([clave, texto, detalle]) =>
+          `<label class="opcion"><input type="radio" name="${campo.nombre}" value="${esc(clave)}"${String(clave) === String(valor) ? ' checked' : ''}><span class="opcion__texto">${esc(texto)}</span>${detalle ? `<b class="opcion__detalle">${esc(detalle)}</b>` : ''}</label>`,
+      )
+      .join('');
+    return `<fieldset class="campo campo--opciones"${condicion}><legend class="campo__nombre">${esc(campo.etiqueta)}</legend><div class="opciones">${botones}</div></fieldset>`;
+  }
 
   if (campo.tipo === 'casilla') {
     return `<label class="campo campo--casilla"${condicion}><input id="${id}" name="${campo.nombre}" type="checkbox"${valor ? ' checked' : ''}><span>${esc(campo.etiqueta)}</span></label>`;
@@ -83,7 +96,7 @@ function htmlCampo(campo, valorGuardado) {
 }
 
 function leerCampo(formulario, campo) {
-  if (campo.tipo === 'colores') {
+  if (campo.tipo === 'colores' || campo.tipo === 'opciones') {
     const marcado = formulario.querySelector(`input[name="${campo.nombre}"]:checked`);
     return marcado ? marcado.value : (campo.porDefecto ?? '');
   }
@@ -114,7 +127,8 @@ export function leerValores(formulario, campos) {
 function aplicarCondiciones(formulario) {
   formulario.querySelectorAll('[data-mostrar-si]').forEach((envoltura) => {
     const origen = formulario.elements.namedItem(envoltura.dataset.mostrarSi);
-    envoltura.hidden = !origen || origen.value !== envoltura.dataset.valor;
+    const valores = envoltura.dataset.valor.split('|');
+    envoltura.hidden = !origen || !valores.includes(origen.value);
   });
 }
 

@@ -1,18 +1,18 @@
 /**
- * Pestaña Pagos: los pagos de un mes, los gastos del día a día y los
- * gastos fijos. También define las acciones de marcar pagos y borrar
- * gastos, que se usan desde Inicio y desde aquí.
+ * Pestaña Pagos: el mes completo. Pagos con fecha (cuotas, tarjetas, gastos
+ * fijos), ingresos extra, gastos del día a día y la lista de gastos fijos.
+ * Marcar pagos está en js/formularios/pago.js.
  */
 import { escaparHtml as esc, dinero, porcentaje, redondear, aNumero } from '../utils/formato.js';
 import { fechaCorta, leerFecha, mesDe, nombreDelMes, sumarMeses } from '../utils/fechas.js';
 import { resumenDelMes, gastosDelMes } from '../domain/presupuesto.js';
-import { idDeTarjeta } from '../domain/tarjetas.js';
-import { boton, bloqueVacio, filaPago, nombreTarjeta } from '../ui/componentes.js';
+import { TIPOS_INGRESO } from '../constants/catalogos.js';
+import { boton, bloqueVacio, filaPago, textoMedio } from '../ui/componentes.js';
 import { ICONOS } from '../ui/iconos.js';
 import { avisar } from '../ui/aviso.js';
 import { confirmarEnBoton } from '../ui/confirmar.js';
 import { cambiar, leer } from '../state/store.js';
-import { alternarPago, borrarGasto, observarMes } from '../data/repositorio.js';
+import { borrarGasto, observarMes } from '../data/repositorio.js';
 
 function navegacion(mes, hoy) {
   const esActual = mes === mesDe(hoy);
@@ -24,7 +24,7 @@ function navegacion(mes, hoy) {
     ${esActual ? '' : `<div style="text-align:center">${boton(`Volver a ${nombreDelMes(mesDe(hoy))}`, 'mes-actual', { variante: 'fantasma chico' })}</div>`}`;
 }
 
-function seccionPagos(r, hoy) {
+function seccionPagos(r, hoy, datos) {
   const avance = r.compromisos > 0 ? r.pagado / r.compromisos : 0;
   return `<section class="seccion">
     <div class="indicadores"><span>Pagos <b>${dinero(r.compromisos)}</b></span><span>Pagado <b>${dinero(r.pagado)}</b></span><span>Falta <b>${dinero(r.pendiente)}</b></span></div>
@@ -34,9 +34,28 @@ function seccionPagos(r, hoy) {
     <div class="seccion__cabecera"><h2 class="seccion__titulo">Pagos del mes</h2></div>
     ${
       r.pagos.length
-        ? `<ul class="pagos">${r.pagos.map((p) => filaPago(p, hoy)).join('')}</ul>
-           <p class="nota">Toquen el círculo al pagar. Al marcar una tarjeta se resta el pago de su saldo y avanzan sus cuotas a plazo.</p>`
+        ? `<ul class="pagos">${r.pagos.map((p) => filaPago(p, hoy, datos)).join('')}</ul>
+           <p class="nota">Toquen el círculo al pagar. En las cuotas eligen el monto y si fue en efectivo o con tarjeta; en las tarjetas, si pagaron el contado, el mínimo u otro monto. Tocarlo otra vez lo desmarca.</p>`
         : bloqueVacio('Todavía no hay pagos para este mes. Agreguen gastos fijos, tarjetas o cuotas.', boton('Agregar gasto fijo', 'nuevo-fijo'))
+    }
+  </section>`;
+}
+
+function seccionIngresosExtra(r, mes) {
+  const lista = [...r.ingresosUnicos].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  const total = redondear(lista.reduce((t, i) => t + aNumero(i.monto), 0));
+  const agregar = boton('Agregar', 'nuevo-ingreso-unico', { variante: 'chico', icono: 'mas', datos: { mes } });
+  return `<section class="seccion">
+    <div class="seccion__cabecera"><h2 class="seccion__titulo">Ingresos extra${lista.length ? ` · ${dinero(total)}` : ''}</h2>${agregar}</div>
+    ${
+      lista.length
+        ? `<ul class="lista">${lista
+            .map((i) => {
+              const fecha = leerFecha(i.fecha);
+              return `<li class="lista__fila"><button type="button" class="lista__enlace" data-accion="editar-ingreso" data-id="${esc(i.id)}"><div class="lista__titulo">${esc(i.nombre)}</div><div class="lista__detalle">${fecha ? fechaCorta(fecha) : ''} · ${esc(TIPOS_INGRESO[i.tipo] || 'Ingreso')}</div></button><span class="monto">+${dinero(i.monto)}</span></li>`;
+            })
+            .join('')}</ul>`
+        : '<p class="nota">Ventas, servicios o cualquier entrada de una sola vez. Se suman a lo que entra este mes.</p>'
     }
   </section>`;
 }
@@ -52,20 +71,13 @@ function seccionGastos(datos, mes) {
   const categorias = Object.entries(porCategoria).sort((a, b) => b[1] - a[1]);
   const mayor = categorias[0]?.[1] || 1;
 
-  const medio = (g) => {
-    const id = idDeTarjeta(g.medio);
-    if (!id) return 'Efectivo';
-    const tarjeta = datos.tarjetas.find((t) => t.id === id);
-    return tarjeta ? nombreTarjeta(tarjeta) : 'Tarjeta';
-  };
-
   const filas = gastos
     .map((g) => {
       const fecha = leerFecha(g.fecha);
       const quien = g.autor?.nombre ? ` · ${g.autor.nombre.split(' ')[0]}` : '';
       const titulo = g.nota || g.categoria;
       return `<li class="lista__fila">
-        <div class="lista__principal"><div class="lista__titulo">${esc(titulo)}</div><div class="lista__detalle">${fecha ? fechaCorta(fecha) : ''} · ${esc(g.categoria)} · ${esc(medio(g))}${esc(quien)}</div></div>
+        <div class="lista__principal"><div class="lista__titulo">${esc(titulo)}</div><div class="lista__detalle">${fecha ? fechaCorta(fecha) : ''} · ${esc(g.categoria)} · ${esc(textoMedio(g.medio, datos.tarjetas))}${esc(quien)}</div></div>
         <span class="monto">${dinero(g.monto)}</span>
         <button type="button" class="lista__borrar" data-accion="borrar-gasto" data-mes="${mes}" data-id="${esc(g.id)}" aria-label="Borrar gasto ${esc(titulo)}">${ICONOS.cerrar}</button>
       </li>`;
@@ -107,7 +119,8 @@ export function vistaPagos(estado, hoy) {
   const { datos, mesVista } = estado;
   const r = resumenDelMes(datos, mesVista, hoy);
   return `<section class="seccion">${navegacion(mesVista, hoy)}</section>
-    ${seccionPagos(r, hoy)}
+    ${seccionPagos(r, hoy, datos)}
+    ${seccionIngresosExtra(r, mesVista)}
     ${seccionGastos(datos, mesVista)}
     ${seccionFijos(datos)}`;
 }
@@ -123,15 +136,6 @@ export const acciones = {
   'mes-anterior': () => cambiarMes(sumarMeses(leer().mesVista, -1)),
   'mes-siguiente': () => cambiarMes(sumarMeses(leer().mesVista, 1)),
   'mes-actual': () => cambiarMes(mesDe(new Date())),
-  'marcar-pago': (elemento) => {
-    const plan = alternarPago(elemento.dataset.mes, elemento.dataset.clave);
-    if (!plan) return;
-    if (plan.plazosTerminados.length) {
-      avisar(`¡Terminaron de pagar ${plan.plazosTerminados.map((p) => p.descripcion).join(' y ')}!`);
-    } else if (plan.montoRebajado > 0) {
-      avisar(`Se restaron ${dinero(plan.montoRebajado)} del saldo de la tarjeta.`);
-    }
-  },
   'borrar-gasto': (elemento) => {
     const { mes, id } = elemento.dataset;
     const gasto = gastosDelMes(leer().datos, mes).find((g) => g.id === id);

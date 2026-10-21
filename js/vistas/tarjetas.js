@@ -1,52 +1,47 @@
-/** Pestaña Tarjetas: saldo, fechas, uso del límite y costo de no pagar todo. */
+/** Pestaña Tarjetas: saldo, fechas, uso del límite y costo de pagar solo el mínimo. */
 import { escaparHtml as esc, dinero, dineroEntero, porcentaje, redondear, sumar, aNumero } from '../utils/formato.js';
-import { cuandoEs, diferenciaDias, fechaCorta, proximaFecha } from '../utils/fechas.js';
-import {
-  cuotasDeTarjeta,
-  interesDelProximoMes,
-  pagoSegunPlan,
-  saldoFinanciado,
-  simularLiquidacion,
-  usoDeTarjeta,
-} from '../domain/tarjetas.js';
-import { estaActivo } from '../domain/plazos.js';
+import { cuandoEs, diferenciaDias, fechaCorta, mesDe, proximaFecha } from '../utils/fechas.js';
+import { cuotasDeTarjeta, opcionesDePago, siPaganElMinimo, usoDeTarjeta } from '../domain/tarjetas.js';
+import { estaActivo, saldoPendiente } from '../domain/plazos.js';
+import { clavePago } from '../domain/presupuesto.js';
 import { boton, bloqueVacio, chip } from '../ui/componentes.js';
-import { COLORES_TARJETA } from '../constants/catalogos.js';
-
-const TEXTO_PLAN = {
-  total: () => 'Pagan todo',
-  minimo: () => 'Pagan el mínimo',
-  fijo: (t) => `Pagan ${dinero(t.planMonto)}`,
-};
+import { COLORES_TARJETA, TIPOS_PAGO_TARJETA } from '../constants/catalogos.js';
 
 function dato(nombre, valor) {
   return `<div><div class="datos__nombre">${nombre}</div><div class="datos__valor">${valor}</div></div>`;
 }
 
 function consejoDePago(tarjeta, fechaPago) {
-  const pago = pagoSegunPlan(tarjeta);
-  if (tarjeta.plan === 'total') {
-    return `<p class="nota">Si pagan <b>${dinero(pago)}</b> antes del ${fechaCorta(fechaPago)}, no pagan intereses.</p>`;
-  }
-  const financiado = saldoFinanciado(tarjeta);
-  if (!(financiado > 0) || !aNumero(tarjeta.tasa)) return '';
-  const simulacion = simularLiquidacion(aNumero(tarjeta.saldo), aNumero(tarjeta.tasa), pago);
-  const proximo = `<p class="nota nota--aviso">Quedarían <b>${dinero(financiado)}</b> financiados: unos <b>${dinero(interesDelProximoMes(tarjeta))}</b> de intereses el próximo mes.</p>`;
-  const plazo = simulacion
-    ? `<p class="nota nota--aviso">Pagando <b>${dinero(pago)}</b> al mes tardarían unos <b>${simulacion.meses} meses</b> en terminar y pagarían cerca de <b>${dinero(simulacion.intereses)}</b> en intereses.</p>`
-    : `<p class="nota nota--aviso"><b>Con ${dinero(pago)} al mes la deuda no baja:</b> apenas cubre los intereses.</p>`;
-  return proximo + plazo;
+  const { contado } = opcionesDePago(tarjeta);
+  if (contado <= 0) return '<p class="nota">No deben nada en esta tarjeta.</p>';
+  const contadoTexto = `<p class="nota">Si pagan el contado (<b>${dinero(contado)}</b>) antes del ${fechaCorta(fechaPago)}, no pagan intereses.</p>`;
+  const minimo = siPaganElMinimo(tarjeta);
+  if (!minimo) return contadoTexto;
+  const plazo = minimo.liquidacion
+    ? `Pagando solo el mínimo cada mes tardarían unos <b>${minimo.liquidacion.meses} meses</b> y pagarían cerca de <b>${dinero(minimo.liquidacion.intereses)}</b> en intereses.`
+    : '<b>Con el mínimo la deuda no baja:</b> apenas cubre los intereses.';
+  return `${contadoTexto}<p class="nota nota--aviso">Si pagan solo el mínimo quedan <b>${dinero(minimo.financiado)}</b> financiados: unos <b>${dinero(minimo.interesMes)}</b> de intereses el próximo mes. ${plazo}</p>`;
 }
 
-function tarjetaHtml(tarjeta, plazos, hoy) {
+function chipDePagoDelMes(tarjeta, datos, hoy) {
+  const registrado = datos.pagados?.[mesDe(hoy)]?.[clavePago('tarjeta', tarjeta.id)];
+  const fechaPago = proximaFecha(tarjeta.pago, hoy);
+  if (registrado) {
+    const como = TIPOS_PAGO_TARJETA[registrado.tipo] || 'Pagada';
+    return chip(`Este mes: ${como.toLowerCase()} ${dinero(registrado.monto)}`, 'bien');
+  }
+  const urgente = diferenciaDias(hoy, fechaPago) <= 3;
+  return chip(`Pago ${cuandoEs(fechaPago, hoy).toLowerCase()}`, urgente ? 'aviso' : '');
+}
+
+function tarjetaHtml(tarjeta, datos, hoy) {
+  const { plazos } = datos;
   const uso = usoDeTarjeta(tarjeta, plazos);
   const cuotas = cuotasDeTarjeta(tarjeta, plazos).filter(estaActivo);
-  const cuotaMensual = redondear(sumar(cuotas, (p) => aNumero(p.cuota)));
+  const pendienteEnCuotas = redondear(sumar(cuotas, saldoPendiente));
   const fechaCorte = proximaFecha(tarjeta.corte, hoy);
   const fechaPago = proximaFecha(tarjeta.pago, hoy);
   const color = tarjeta.color in COLORES_TARJETA ? tarjeta.color : 'cobalto';
-  const urgente = diferenciaDias(hoy, fechaPago) <= 3;
-  const plan = (TEXTO_PLAN[tarjeta.plan] || TEXTO_PLAN.total)(tarjeta);
 
   return `<article class="tarjeta">
     <div class="tarjeta__frente tarjeta__frente--${color}">
@@ -69,8 +64,8 @@ function tarjetaHtml(tarjeta, plazos, hoy) {
         ${dato('Tasa anual', aNumero(tarjeta.tasa) ? `${aNumero(tarjeta.tasa)}%` : '—')}
         ${dato('Uso', porcentaje(uso.proporcion))}
       </div>
-      <div class="chips">${chip(`Pago ${cuandoEs(fechaPago, hoy).toLowerCase()}`, urgente ? 'aviso' : '')}${chip(plan, 'acento')}</div>
-      ${cuotas.length ? `<p class="nota">${cuotas.length} compra${cuotas.length > 1 ? 's' : ''} a cuotas en esta tarjeta: <b>${dinero(cuotaMensual)}</b> al mes, <b>${dinero(uso.enCuotas)}</b> pendientes.</p>` : ''}
+      <div class="chips">${chipDePagoDelMes(tarjeta, datos, hoy)}</div>
+      ${cuotas.length ? `<p class="nota">${cuotas.length} compra${cuotas.length > 1 ? 's' : ''} a cuotas se paga${cuotas.length > 1 ? 'n' : ''} normalmente con esta tarjeta: faltan <b>${dinero(pendienteEnCuotas)}</b>, que ya ocupan parte del límite.</p>` : ''}
       ${consejoDePago(tarjeta, fechaPago)}
       <div class="tarjeta__acciones">${boton('Editar o actualizar saldo', 'editar-tarjeta', { variante: 'chico', datos: { id: tarjeta.id } })}</div>
     </div>
@@ -78,7 +73,8 @@ function tarjetaHtml(tarjeta, plazos, hoy) {
 }
 
 export function vistaTarjetas(estado, hoy) {
-  const { tarjetas, plazos } = estado.datos;
+  const { datos } = estado;
+  const { tarjetas, plazos } = datos;
   if (!tarjetas.length) {
     return `<section class="seccion"><h1 class="titulo-pagina">Tarjetas de crédito</h1></section>
       ${bloqueVacio('Agreguen sus tarjetas con los datos del estado de cuenta: límite, saldo, día de corte y fecha de pago.', boton('Agregar tarjeta', 'nueva-tarjeta', { variante: 'principal' }))}`;
@@ -91,6 +87,6 @@ export function vistaTarjetas(estado, hoy) {
       <div class="seccion__cabecera"><h1 class="titulo-pagina">Tarjetas</h1>${boton('Agregar', 'nueva-tarjeta', { variante: 'chico', icono: 'mas' })}</div>
       <div class="indicadores"><span>Saldo total <b>${dinero(saldo)}</b></span><span>Usado con cuotas <b>${dinero(usado)}</b></span><span>Límite <b>${dineroEntero(limite)}</b></span></div>
     </section>
-    <section class="tarjetas">${ordenadas.map((t) => tarjetaHtml(t, plazos, hoy)).join('')}</section>
-    <p class="nota">Lo que compran después del día de corte entra al siguiente estado de cuenta. Comprando justo después del corte tienen más días para pagar sin intereses.</p>`;
+    <section class="tarjetas">${ordenadas.map((t) => tarjetaHtml(t, datos, hoy)).join('')}</section>
+    <p class="nota">El pago se marca en Pagos, y ahí eligen si fue el contado, el mínimo u otro monto. Lo que compran después del día de corte entra al siguiente estado de cuenta.</p>`;
 }

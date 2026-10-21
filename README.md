@@ -4,8 +4,9 @@ Finanzas del hogar para El Salvador, compartidas entre dos personas.
 
 - **Salarios** con los descuentos de ley: ISSS 3 % (máximo $30), AFP 7.25 % y renta según la tabla de retención vigente desde mayo de 2025.
 - **Aguinaldo** según los años de servicio (15, 19 o 21 días).
-- **Tarjetas de crédito**: saldo, día de corte, fecha de pago, uso del límite y cuánto cuestan los intereses si solo se paga una parte.
-- **Cuotas y préstamos**: compras en almacenes, tasa cero, préstamos, extrafinanciamientos y descuentos por planilla.
+- **Tarjetas de crédito**: saldo, día de corte, fecha de pago, uso del límite y cuánto cuestan los intereses si solo se paga el mínimo. Al pagar se elige contado, mínimo u otro monto.
+- **Cuotas y préstamos**: compras en almacenes, tasa cero, préstamos, extrafinanciamientos y descuentos por planilla. Al pagar se elige efectivo o tarjeta y se puede abonar más que la cuota.
+- **Ingresos**: salarios con los días de pago de cada quien, ingresos que se repiten y ventas o servicios de una sola vez.
 - **Pagos del mes** con fecha, para marcarlos al pagar, y **gastos del día a día**.
 - Lo que una persona anota, la otra lo ve al instante en su teléfono.
 
@@ -81,10 +82,17 @@ En Firebase: **Authentication → Configuración → Dominios autorizados → Ag
 
 Sin este paso, el botón "Entrar con Google" da error.
 
-### 7. Ponerla en la pantalla del teléfono
+### 7. Instalarla en el teléfono
 
-- **Android (Chrome):** abrí la dirección → menú ⋮ → **Agregar a la pantalla principal**.
-- **iPhone (Safari):** abrí la dirección → botón Compartir → **Agregar a inicio**.
+**Android (Chrome):**
+1. Abrí la dirección en **Chrome** y esperá a que cargue la pantalla de entrada.
+2. Menú ⋮ → **Instalar app** (en algunos teléfonos dice **Agregar a la pantalla principal**) → **Instalar**.
+3. Buscá **Cuentas** en el cajón de apps (deslizando hacia arriba). Si no apareció en la pantalla de inicio, dejala apretada y arrastrala.
+4. Abrila desde el ícono y entrá con Google. La app instalada pide entrar una vez, aparte del navegador.
+
+**iPhone:** tiene que ser desde **Safari** (no Chrome). Botón Compartir → **Agregar a inicio** → **Agregar**.
+
+Si se instaló antes de que la app estuviera completa y no abre: borrá el ícono (dejalo apretado → Desinstalar o Eliminar), abrí la dirección otra vez en el navegador, recargá y volvé a instalar.
 
 Cada uno entra con su propia cuenta de Google. Los datos son los mismos para los dos.
 
@@ -136,6 +144,7 @@ Prueban los cálculos (salario, renta, aguinaldo, tarjetas, presupuesto, respald
 ```
 index.html                 Estructura de la página; carga los estilos y js/main.js
 manifest.webmanifest       Datos para instalar la app en el teléfono
+sw.js                      Service worker: instalación y abrir sin señal
 firestore.rules            Quién puede leer y escribir (los dos correos)
 css/
   tokens.css               Colores, tipografía y radios (tema claro y oscuro)
@@ -153,7 +162,7 @@ js/
   domain/                  Reglas de negocio (funciones puras, con pruebas)
     salario.js             Salario neto y aguinaldo
     tarjetas.js            Pago del mes, uso del límite, simulación de intereses
-    plazos.js              Cuotas pagadas y pendientes
+    plazos.js              Lo pagado y lo que falta de cada cuota (en dinero, con abonos)
     presupuesto.js         Ingresos, pagos del mes, endeudamiento, marcar pagos
     respaldo.js            Crear y leer respaldos
   data/                    Lo único que habla con Firebase
@@ -162,7 +171,7 @@ js/
     repositorio.js         Leer y escribir en Firestore
   state/store.js           Estado en memoria
   ui/                      Piezas de interfaz reutilizables
-  formularios/             Un formulario por tipo de registro
+  formularios/             Un formulario por tipo de registro; pago.js marca los pagos
   vistas/                  Una vista por pestaña, más pantallas y ajustes
 tests/                     Pruebas con node:test
 docs/ARQUITECTURA.md       Reglas del código, flujo de datos y modelo de datos

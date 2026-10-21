@@ -102,6 +102,19 @@
 .segmento--pendiente { background: var(--maiz); }
 .segmento--gastos { background: var(--resumen-suave); opacity: 0.65; }
 
+/* ---------- Inicio: botones rápidos ---------- */
+
+.acciones-rapidas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: -8px;
+}
+
+.acciones-rapidas .boton {
+  padding-block: 12px;
+}
+
 /* ---------- Inicio: cifras ---------- */
 
 .cifras {

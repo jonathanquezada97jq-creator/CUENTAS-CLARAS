@@ -13,12 +13,13 @@
  * @property {number} [tasa]  Tasa de interés anual en %.
  * @property {number} corte  Día de corte.
  * @property {number} pago  Día límite de pago.
- * @property {'total'|'minimo'|'fijo'} plan  Cuánto se piensa pagar cada mes.
- * @property {number} [planMonto]  Monto cuando el plan es "fijo".
  * @property {string} color  Clave de COLORES_TARJETA.
+ *
+ * Cuánto se paga cada mes (contado, mínimo u otro monto) no se guarda en la
+ * tarjeta: se elige al marcar el pago y queda en el mes (ver presupuesto.js).
  */
 import { aNumero, redondear, sumar } from '../utils/formato.js';
-import { cuotasPendientes } from './plazos.js';
+import { saldoPendiente } from './plazos.js';
 
 const PREFIJO = 'tarjeta:';
 
@@ -41,12 +42,30 @@ export function cuotasDeTarjeta(tarjeta, plazos) {
   return plazos.filter((p) => p.metodo === referencia);
 }
 
-/** Lo que se piensa pagar este mes según el plan elegido, sin pasar del saldo. */
-export function pagoSegunPlan(tarjeta) {
-  const saldo = Math.max(0, aNumero(tarjeta.saldo));
-  if (tarjeta.plan === 'minimo') return redondear(Math.min(aNumero(tarjeta.pagoMinimo), saldo));
-  if (tarjeta.plan === 'fijo') return redondear(Math.min(aNumero(tarjeta.planMonto), saldo));
-  return redondear(saldo);
+/** Formas de pagar la tarjeta que se ofrecen al marcar el pago. */
+export const TIPO_PAGO_TARJETA = Object.freeze({
+  CONTADO: 'contado',
+  MINIMO: 'minimo',
+  OTRO: 'otro',
+});
+
+/**
+ * Montos para pagar la tarjeta este mes.
+ * @returns {{contado:number, minimo:number|null}}  contado = todo el saldo;
+ *   minimo = pago mínimo registrado (sin pasar del saldo), o null si no hay.
+ */
+export function opcionesDePago(tarjeta) {
+  const contado = redondear(Math.max(0, aNumero(tarjeta.saldo)));
+  const minimo = aNumero(tarjeta.pagoMinimo);
+  return { contado, minimo: minimo > 0 ? redondear(Math.min(minimo, contado)) : null };
+}
+
+/** Monto de un pago según la opción elegida ('contado', 'minimo' u 'otro'). */
+export function montoDeOpcion(tarjeta, tipo, montoOtro) {
+  const { contado, minimo } = opcionesDePago(tarjeta);
+  if (tipo === TIPO_PAGO_TARJETA.MINIMO) return minimo ?? 0;
+  if (tipo === TIPO_PAGO_TARJETA.OTRO) return redondear(Math.max(0, aNumero(montoOtro)));
+  return contado;
 }
 
 /**
@@ -54,9 +73,8 @@ export function pagoSegunPlan(tarjeta) {
  * @returns {{enCuotas:number, usado:number, disponible:number, proporcion:number}}
  */
 export function usoDeTarjeta(tarjeta, plazos) {
-  const enCuotas = redondear(
-    sumar(cuotasDeTarjeta(tarjeta, plazos), (p) => cuotasPendientes(p) * aNumero(p.cuota)),
-  );
+  // Lo que falta de compras a plazo hechas con esta tarjeta (tasa cero, por ejemplo).
+  const enCuotas = redondear(sumar(cuotasDeTarjeta(tarjeta, plazos), saldoPendiente));
   const usado = redondear(aNumero(tarjeta.saldo) + enCuotas);
   const limite = aNumero(tarjeta.limite);
   return {
@@ -67,14 +85,22 @@ export function usoDeTarjeta(tarjeta, plazos) {
   };
 }
 
-/** Saldo que queda financiado después del pago del plan. */
-export function saldoFinanciado(tarjeta) {
-  return redondear(Math.max(0, aNumero(tarjeta.saldo) - pagoSegunPlan(tarjeta)));
-}
-
-/** Interés aproximado del próximo mes sobre lo que queda financiado. */
-export function interesDelProximoMes(tarjeta) {
-  return redondear((saldoFinanciado(tarjeta) * aNumero(tarjeta.tasa)) / 1200);
+/**
+ * Qué pasa si solo se paga el mínimo: lo que queda financiado, el interés
+ * del próximo mes y cuánto tardarían en terminar pagando el mínimo cada mes.
+ * @returns {{financiado:number, interesMes:number, liquidacion:{meses:number, intereses:number}|null}|null}
+ *   null si no hay pago mínimo, tasa o saldo por encima del mínimo.
+ */
+export function siPaganElMinimo(tarjeta) {
+  const { contado, minimo } = opcionesDePago(tarjeta);
+  const tasa = aNumero(tarjeta.tasa);
+  if (minimo === null || !tasa || contado <= minimo) return null;
+  const financiado = redondear(contado - minimo);
+  return {
+    financiado,
+    interesMes: redondear((financiado * tasa) / 1200),
+    liquidacion: simularLiquidacion(contado, tasa, minimo),
+  };
 }
 
 /**

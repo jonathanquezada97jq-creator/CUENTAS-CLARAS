@@ -31,6 +31,7 @@ import { acciones as accionesFijo } from './formularios/fijo.js';
 import { acciones as accionesIngreso } from './formularios/ingreso.js';
 import { acciones as accionesPersona } from './formularios/persona.js';
 import { acciones as accionesGasto } from './formularios/gasto.js';
+import { acciones as accionesPago } from './formularios/pago.js';
 
 /** Pestañas: nombre en la dirección (#pagos) → función que arma su HTML. */
 export const VISTAS = Object.freeze({
@@ -111,6 +112,7 @@ export function iniciarInterfaz() {
     accionesIngreso,
     accionesPersona,
     accionesGasto,
+    accionesPago,
   ].forEach(registrarAcciones);
   escucharAcciones(document);
   prepararHoja();

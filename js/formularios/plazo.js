@@ -7,12 +7,13 @@ import { METODO } from '../domain/plazos.js';
 import { referenciaTarjeta } from '../domain/tarjetas.js';
 import { nombreTarjeta } from '../ui/componentes.js';
 import { esDiaDelMes } from '../utils/fechas.js';
+import { aNumero, dinero } from '../utils/formato.js';
 
 function campos({ tarjetas, personas }) {
   const metodos = [
-    [METODO.DIRECTO, 'Lo pagamos directo (agencia, app o banca en línea)'],
+    [METODO.DIRECTO, 'En efectivo, débito o transferencia'],
     [METODO.PLANILLA, 'Descuento por planilla'],
-    ...tarjetas.map((t) => [referenciaTarjeta(t.id), `Se carga a la ${nombreTarjeta(t).toLowerCase()}`]),
+    ...tarjetas.map((t) => [referenciaTarjeta(t.id), `Con la ${nombreTarjeta(t).toLowerCase()}`]),
   ];
   return [
     { nombre: 'descripcion', etiqueta: '¿Qué es?', requerido: true, ejemplo: 'Refrigeradora, celular, préstamo…' },
@@ -20,11 +21,11 @@ function campos({ tarjetas, personas }) {
     { nombre: 'tipo', etiqueta: 'Tipo', tipo: 'lista', opciones: TIPOS_PLAZO, porDefecto: 'tienda' },
     {
       nombre: 'metodo',
-      etiqueta: '¿Cómo se paga?',
+      etiqueta: '¿Cómo la pagan normalmente?',
       tipo: 'lista',
       opciones: metodos,
       porDefecto: METODO.DIRECTO,
-      ayuda: 'Si se carga a una tarjeta, la cuota se suma al pago de esa tarjeta.',
+      ayuda: 'Es solo la opción sugerida: al marcar cada cuota pueden elegir efectivo o tarjeta y abonar más.',
     },
     {
       nombre: 'personaId',
@@ -37,7 +38,14 @@ function campos({ tarjetas, personas }) {
     { nombre: 'cuota', etiqueta: 'Cuota mensual', tipo: 'dinero', requerido: true, medio: true },
     { nombre: 'dia', etiqueta: 'Día de pago', tipo: 'dia', requerido: true, medio: true, ejemplo: '15' },
     { nombre: 'total', etiqueta: 'Total de cuotas', tipo: 'entero', requerido: true, medio: true, ejemplo: '24' },
-    { nombre: 'pagadas', etiqueta: 'Cuotas ya pagadas', tipo: 'entero', medio: true, porDefecto: 0 },
+    {
+      nombre: 'pagadas',
+      etiqueta: 'Cuotas pagadas antes',
+      tipo: 'entero',
+      medio: true,
+      porDefecto: 0,
+      ayuda: 'Las que ya llevaban pagadas al anotarla aquí.',
+    },
     {
       nombre: 'tasa',
       etiqueta: 'Tasa anual % (opcional)',
@@ -59,8 +67,10 @@ function validar(v) {
 export function abrirFormularioPlazo(id) {
   const { datos } = leer();
   const plazo = id ? datos.plazos.find((p) => p.id === id) : null;
+  const abonado = aNumero(plazo?.abonado);
   abrirFormulario({
     titulo: plazo ? 'Editar cuota' : 'Nueva compra a plazo o préstamo',
+    intro: abonado > 0 ? `Pagado desde la app: ${dinero(abonado)}. Eso se suma a las cuotas pagadas antes.` : '',
     campos: campos(datos),
     valores: plazo || {},
     validar,

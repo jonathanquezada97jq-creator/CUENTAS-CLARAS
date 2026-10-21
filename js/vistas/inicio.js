@@ -109,7 +109,7 @@ function proximosPagos(r, datos, mes, hoy) {
   const lista = [...pendientes, ...siguientes].slice(0, 6);
   return `<section class="seccion">
     <div class="seccion__cabecera"><h2 class="seccion__titulo">Próximos pagos</h2>${enlacePestana('Ver el mes', 'pagos')}</div>
-    ${lista.length ? `<ul class="pagos">${lista.map((p) => filaPago(p, hoy)).join('')}</ul>` : bloqueVacio('No hay pagos pendientes en las próximas semanas.')}
+    ${lista.length ? `<ul class="pagos">${lista.map((p) => filaPago(p, hoy, datos)).join('')}</ul>` : bloqueVacio('No hay pagos pendientes en las próximas semanas.')}
   </section>`;
 }
 
@@ -136,9 +136,8 @@ function ultimosGastos(datos, mes) {
   const gastos = [...gastosDelMes(datos, mes)]
     .sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '') || marcaDeTiempo(b) - marcaDeTiempo(a))
     .slice(0, 3);
-  const agregar = boton('Agregar gasto', 'nuevo-gasto', { variante: 'chico', icono: 'mas', datos: { mes } });
   return `<section class="seccion">
-    <div class="seccion__cabecera"><h2 class="seccion__titulo">Lo último que anotaron</h2>${agregar}</div>
+    <div class="seccion__cabecera"><h2 class="seccion__titulo">Lo último que anotaron</h2>${enlacePestana('Ver gastos', 'pagos')}</div>
     ${
       gastos.length
         ? `<ul class="lista">${gastos
@@ -196,8 +195,13 @@ export function vistaInicio(estado, hoy) {
 
   const mes = mesDe(hoy);
   const r = resumenDelMes(datos, mes, hoy);
+  const accionesRapidas = `<div class="acciones-rapidas">
+      ${boton('Agregar gasto', 'nuevo-gasto', { variante: 'principal', icono: 'mas', datos: { mes } })}
+      ${boton('Agregar ingreso', 'nuevo-ingreso-unico', { icono: 'mas', datos: { mes } })}
+    </div>`;
   return [
     resumen(r, mes),
+    accionesRapidas,
     cifras(r, datos),
     proximosPagos(r, datos, mes, hoy),
     ultimosGastos(datos, mes),

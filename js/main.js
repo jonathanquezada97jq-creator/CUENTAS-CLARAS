@@ -64,6 +64,11 @@ suscribir(dibujar);
 dibujar(leer());
 document.documentElement.dataset.iniciada = 'si';
 
+// Necesario para instalar la app en el teléfono y abrirla sin señal (ver sw.js).
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch((error) => console.warn('Sin service worker:', error));
+}
+
 if (faltaConfigurar()) {
   cambiar((e) => {
     e.sesion = 'sin-config';

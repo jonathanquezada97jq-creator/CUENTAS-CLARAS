@@ -24,11 +24,27 @@ const CAMPOS = [
     nombre: 'frecuencia',
     etiqueta: 'Frecuencia de pago',
     tipo: 'lista',
-    opciones: [['quincenal', 'Quincenal (15 y fin de mes)'], ['mensual', 'Mensual']],
+    opciones: [['quincenal', 'Quincenal (dos pagos al mes)'], ['mensual', 'Mensual (un pago)']],
     porDefecto: 'quincenal',
-    medio: true,
   },
-  { nombre: 'diaPago', etiqueta: 'Día de pago', tipo: 'dia', medio: true, porDefecto: 30, mostrarSi: ['frecuencia', 'mensual'] },
+  {
+    nombre: 'diaQuincena1',
+    etiqueta: 'Día del primer pago',
+    tipo: 'dia',
+    medio: true,
+    porDefecto: 15,
+    mostrarSi: ['frecuencia', 'quincenal'],
+  },
+  {
+    nombre: 'diaQuincena2',
+    etiqueta: 'Día del segundo pago',
+    tipo: 'dia',
+    medio: true,
+    porDefecto: 30,
+    mostrarSi: ['frecuencia', 'quincenal'],
+    ayuda: 'Si cae en 31 o fin de mes, poné 30.',
+  },
+  { nombre: 'diaPago', etiqueta: 'Día de pago', tipo: 'dia', porDefecto: 30, mostrarSi: ['frecuencia', 'mensual'] },
   {
     nombre: 'fechaIngreso',
     etiqueta: 'Fecha en que entró a su trabajo',
@@ -57,6 +73,12 @@ function validar(v) {
   }
   if (v.frecuencia === 'mensual' && v.diaPago !== '' && !esDiaDelMes(v.diaPago)) {
     return 'El día de pago tiene que estar entre 1 y 31.';
+  }
+  if (v.frecuencia === 'quincenal') {
+    if (!esDiaDelMes(v.diaQuincena1) || !esDiaDelMes(v.diaQuincena2)) {
+      return 'Los días de pago tienen que estar entre 1 y 31.';
+    }
+    if (v.diaQuincena1 === v.diaQuincena2) return 'Los dos días de pago tienen que ser distintos.';
   }
   return undefined;
 }

@@ -2,7 +2,7 @@
 import { abrirFormulario } from '../ui/formulario.js';
 import { leer } from '../state/store.js';
 import { guardarRegistro, eliminarRegistro } from '../data/repositorio.js';
-import { BANCOS, COLORES_TARJETA, PLANES_TARJETA } from '../constants/catalogos.js';
+import { BANCOS, COLORES_TARJETA } from '../constants/catalogos.js';
 import { esDiaDelMes } from '../utils/fechas.js';
 
 function campos(personas) {
@@ -26,16 +26,14 @@ function campos(personas) {
     },
     { nombre: 'corte', etiqueta: 'Día de corte', tipo: 'dia', requerido: true, medio: true, ejemplo: '20' },
     { nombre: 'pago', etiqueta: 'Día límite de pago', tipo: 'dia', requerido: true, medio: true, ejemplo: '5' },
-    { nombre: 'pagoMinimo', etiqueta: 'Pago mínimo', tipo: 'dinero', medio: true },
-    { nombre: 'tasa', etiqueta: 'Tasa anual (%)', tipo: 'porcentaje', medio: true, ejemplo: '34.9' },
     {
-      nombre: 'plan',
-      etiqueta: '¿Cuánto van a pagar cada mes?',
-      tipo: 'lista',
-      opciones: PLANES_TARJETA,
-      porDefecto: 'total',
+      nombre: 'pagoMinimo',
+      etiqueta: 'Pago mínimo',
+      tipo: 'dinero',
+      medio: true,
+      ayuda: 'Del estado de cuenta. Al pagar se elige contado, mínimo u otro monto.',
     },
-    { nombre: 'planMonto', etiqueta: 'Monto fijo mensual', tipo: 'dinero', mostrarSi: ['plan', 'fijo'] },
+    { nombre: 'tasa', etiqueta: 'Tasa anual (%)', tipo: 'porcentaje', medio: true, ejemplo: '34.9' },
     { nombre: 'color', etiqueta: 'Color', tipo: 'colores', opciones: COLORES_TARJETA, porDefecto: 'cobalto' },
   ];
 }
@@ -44,8 +42,6 @@ function validar(v) {
   if (!(v.limite > 0)) return 'El límite tiene que ser mayor a $0.';
   if (!esDiaDelMes(v.corte) || !esDiaDelMes(v.pago)) return 'Los días tienen que estar entre 1 y 31.';
   if (v.ultimos && !/^\d{1,4}$/.test(v.ultimos)) return 'Los últimos dígitos solo llevan números.';
-  if (v.plan === 'minimo' && !(v.pagoMinimo > 0)) return 'Escribí el pago mínimo del estado de cuenta.';
-  if (v.plan === 'fijo' && !(v.planMonto > 0)) return 'Escribí el monto fijo que van a pagar.';
   return undefined;
 }
 

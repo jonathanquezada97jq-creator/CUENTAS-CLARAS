@@ -71,17 +71,27 @@ export const TIPOS_PLAZO = Object.freeze({
 });
 
 export const TIPOS_INGRESO = Object.freeze({
+  venta: 'Venta',
+  servicio: 'Servicio o trabajo extra',
   remesa: 'Remesa',
-  negocio: 'Negocio o ventas',
+  negocio: 'Negocio',
   alquiler: 'Alquiler',
   pension: 'Pensión',
   otro: 'Otro',
 });
 
-export const PLANES_TARJETA = Object.freeze({
-  total: 'Todo el saldo (pago de contado)',
-  minimo: 'Solo el pago mínimo',
-  fijo: 'Un monto fijo',
+/** Frecuencia de otros ingresos. 'unica' lleva fecha en lugar de día. */
+export const FRECUENCIAS_INGRESO = Object.freeze({
+  unica: 'Una sola vez',
+  mensual: 'Cada mes',
+  quincenal: 'Cada quincena',
+});
+
+/** Cómo se pagó la tarjeta en un mes. */
+export const TIPOS_PAGO_TARJETA = Object.freeze({
+  contado: 'Pago de contado',
+  minimo: 'Pago mínimo',
+  otro: 'Otro monto',
 });
 
 export const TIPOS_SALARIO = Object.freeze({

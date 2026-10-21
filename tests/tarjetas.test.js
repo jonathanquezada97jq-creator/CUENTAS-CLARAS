@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pagoSegunPlan,
+  opcionesDePago,
+  montoDeOpcion,
+  siPaganElMinimo,
   usoDeTarjeta,
   simularLiquidacion,
   idDeTarjeta,
@@ -14,18 +16,30 @@ const tarjeta = (extra = {}) => ({
   saldo: 600,
   pagoMinimo: 45,
   tasa: 37.5,
-  plan: 'total',
   ...extra,
 });
 
-test('pago según el plan elegido', () => {
-  assert.equal(pagoSegunPlan(tarjeta()), 600);
-  assert.equal(pagoSegunPlan(tarjeta({ plan: 'minimo' })), 45);
-  assert.equal(pagoSegunPlan(tarjeta({ plan: 'fijo', planMonto: 100 })), 100);
-  assert.equal(pagoSegunPlan(tarjeta({ plan: 'fijo', planMonto: 900 })), 600, 'no pasa del saldo');
+test('opciones de pago: contado y mínimo', () => {
+  assert.deepEqual(opcionesDePago(tarjeta()), { contado: 600, minimo: 45 });
+  assert.deepEqual(opcionesDePago(tarjeta({ pagoMinimo: '' })), { contado: 600, minimo: null });
+  assert.deepEqual(opcionesDePago(tarjeta({ saldo: 30 })), { contado: 30, minimo: 30 }, 'el mínimo no pasa del saldo');
 });
 
-test('el uso cuenta las cuotas que faltan por cobrar', () => {
+test('monto según la opción elegida al pagar', () => {
+  assert.equal(montoDeOpcion(tarjeta(), 'contado'), 600);
+  assert.equal(montoDeOpcion(tarjeta(), 'minimo'), 45);
+  assert.equal(montoDeOpcion(tarjeta(), 'otro', 120.5), 120.5);
+});
+
+test('qué pasa si solo pagan el mínimo', () => {
+  const r = siPaganElMinimo(tarjeta({ saldo: 610 }));
+  assert.equal(r.financiado, 565);
+  assert.equal(r.interesMes, 17.66);
+  assert.deepEqual(r.liquidacion, { meses: 18, intereses: 195.73 });
+  assert.equal(siPaganElMinimo(tarjeta({ tasa: '' })), null);
+});
+
+test('el uso cuenta las cuotas que faltan de compras hechas con la tarjeta', () => {
   const plazos = [{ id: 'p1', metodo: 'tarjeta:t1', cuota: 35, total: 12, pagadas: 4 }];
   const uso = usoDeTarjeta(tarjeta({ saldo: 200 }), plazos);
   assert.equal(uso.enCuotas, 280);

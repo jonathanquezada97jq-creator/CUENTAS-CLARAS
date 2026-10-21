@@ -10,7 +10,10 @@ import { cuandoEs, diferenciaDias, mesCorto, mesDe } from '../utils/fechas.js';
 import { ICONOS } from './iconos.js';
 import { calcularSalario, TIPO_SALARIO } from '../domain/salario.js';
 import { descuentosDePlanilla, pagosAlMes, TIPO_PAGO } from '../domain/presupuesto.js';
+import { cuotaDelMes } from '../domain/plazos.js';
+import { idDeTarjeta } from '../domain/tarjetas.js';
 import { AGUINALDO } from '../constants/ley-sv.js';
+import { TIPOS_PAGO_TARJETA } from '../constants/catalogos.js';
 
 /**
  * Botón que dispara una acción registrada (ver js/ui/acciones.js).
@@ -63,21 +66,29 @@ function nombreDelPago(pago) {
   return pago.registro.nombre;
 }
 
-function detalleDelPago(pago, esMesActual) {
+/** "en efectivo", "por planilla", "con Tarjeta BAC ••1107". */
+export function textoMedio(medio, tarjetas) {
+  const idTarjeta = idDeTarjeta(medio);
+  if (idTarjeta) {
+    const tarjeta = tarjetas.find((t) => t.id === idTarjeta);
+    return tarjeta ? `con ${nombreTarjeta(tarjeta)}` : 'con tarjeta';
+  }
+  return medio === 'planilla' ? 'por planilla' : 'en efectivo';
+}
+
+function detalleDelPago(pago, esMesActual, datos) {
   const r = pago.registro;
   if (pago.tipo === TIPO_PAGO.FIJO) return r.categoria || 'Gasto fijo';
   if (pago.tipo === TIPO_PAGO.PLAZO) {
-    return [
-      r.acreedor,
-      esMesActual ? `cuota ${pago.numeroCuota} de ${r.total}` : 'cuota mensual',
-      pago.porPlanilla ? 'por planilla' : '',
-    ]
-      .filter(Boolean)
-      .join(' · ');
+    const estado = pago.pagado
+      ? `pagada ${textoMedio(pago.medio, datos.tarjetas)}`
+      : [esMesActual ? `cuota ${pago.numeroCuota} de ${r.total}` : 'cuota mensual', pago.porPlanilla ? 'por planilla' : '']
+          .filter(Boolean)
+          .join(' · ');
+    return [r.acreedor, estado].filter(Boolean).join(' · ');
   }
-  const plan = { total: 'Pago de contado', minimo: 'Pago mínimo', fijo: 'Monto fijo' }[r.plan] || 'Pago';
-  const n = pago.cuotasIncluidas.length;
-  return n ? `${plan} + ${n} cuota${n > 1 ? 's' : ''} a plazo` : plan;
+  if (pago.pagado) return TIPOS_PAGO_TARJETA[pago.tipoDePago] || 'Pagada';
+  return pago.minimo ? `Contado · mínimo ${dinero(pago.minimo)}` : 'Pago de contado';
 }
 
 function chipDelPago(pago, hoy) {
@@ -92,8 +103,10 @@ function chipDelPago(pago, hoy) {
 /**
  * Fila con el círculo para marcar el pago.
  * @param {import('../domain/presupuesto.js').PagoDelMes} pago
+ * @param {Date} hoy
+ * @param {import('../domain/presupuesto.js').DatosHogar} datos  Para nombrar la tarjeta usada.
  */
-export function filaPago(pago, hoy) {
+export function filaPago(pago, hoy, datos) {
   const mes = mesDe(pago.fecha);
   const nombre = nombreDelPago(pago);
   const etiqueta = `${pago.pagado ? 'Desmarcar' : 'Marcar como pagado'}: ${nombre}`;
@@ -102,7 +115,7 @@ export function filaPago(pago, hoy) {
     <div class="pago__fecha"><b>${pago.fecha.getDate()}</b><span>${mesCorto(pago.fecha)}</span></div>
     <div class="pago__principal">
       <div class="pago__nombre">${esc(nombre)}</div>
-      <div class="pago__detalle">${esc(detalleDelPago(pago, mes === mesDe(hoy)))}</div>
+      <div class="pago__detalle">${esc(detalleDelPago(pago, mes === mesDe(hoy), datos))}</div>
     </div>
     <div class="pago__final"><span class="monto">${dinero(pago.monto)}</span>${chipDelPago(pago, hoy)}</div>
   </li>`;
@@ -146,9 +159,9 @@ export function boletaSalario(persona, datos) {
 
   const planilla = descuentosDePlanilla(persona, datos);
   planilla.forEach((p) =>
-    lineas.push(lineaBoleta(`Planilla: ${esc(p.descripcion)}`, resta(p.cuota), 'resta')),
+    lineas.push(lineaBoleta(`Planilla: ${esc(p.descripcion)}`, resta(cuotaDelMes(p)), 'resta')),
   );
-  const deposito = redondear(s.neto - sumar(planilla, (p) => aNumero(p.cuota)));
+  const deposito = redondear(s.neto - sumar(planilla, cuotaDelMes));
   if (planilla.length) lineas.push(lineaBoleta('Depósito del mes', dinero(deposito)));
   if (pagosAlMes(persona) === 2) {
     lineas.push(lineaBoleta('Por quincena', dinero(deposito / 2), 'suave'));

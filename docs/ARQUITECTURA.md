@@ -69,25 +69,42 @@ Todo vive bajo `hogares/{HOGAR_ID}` (`HOGAR_ID` está en `js/config.js`).
 
 | Colección | Documento | Campos principales |
 | --- | --- | --- |
-| `personas` | id automático | `nombre`, `salarioBruto`, `tipo` (`asalariado` · `servicios` · `sin`), `frecuencia` (`quincenal` · `mensual`), `diaPago`, `fechaIngreso`, `deduccion1600`, `netoReal` |
-| `ingresos` | id automático | `nombre`, `tipo`, `monto`, `frecuencia`, `dia` |
-| `tarjetas` | id automático | `banco`, `nombre`, `ultimos`, `titular`, `limite`, `saldo`, `pagoMinimo`, `tasa`, `corte`, `pago`, `plan` (`total` · `minimo` · `fijo`), `planMonto`, `color` |
-| `plazos` | id automático | `descripcion`, `acreedor`, `tipo`, `metodo` (`efectivo` · `planilla` · `tarjeta:<id>`), `personaId`, `cuota`, `total`, `pagadas`, `dia`, `tasa` |
+| `personas` | id automático | `nombre`, `salarioBruto`, `tipo` (`asalariado` · `servicios` · `sin`), `frecuencia` (`quincenal` · `mensual`), `diaQuincena1`, `diaQuincena2` (si es quincenal), `diaPago` (si es mensual), `fechaIngreso`, `deduccion1600`, `netoReal` |
+| `ingresos` | id automático | `nombre`, `tipo`, `monto`, `frecuencia` (`unica` · `mensual` · `quincenal`), `fecha` (si es `unica`), `dia` (si se repite) |
+| `tarjetas` | id automático | `banco`, `nombre`, `ultimos`, `titular`, `limite`, `saldo`, `pagoMinimo`, `tasa`, `corte`, `pago`, `color` |
+| `plazos` | id automático | `descripcion`, `acreedor`, `tipo`, `metodo` (cómo se paga normalmente: `efectivo` · `planilla` · `tarjeta:<id>`), `personaId`, `cuota`, `total`, `pagadas` (cuotas pagadas antes de anotarla), `abonado` (dinero pagado desde la app), `dia`, `tasa` |
 | `fijos` | id automático | `nombre`, `categoria`, `monto`, `dia` |
 | `meses` | `YYYY-MM` | `pagados`: mapa de clave de pago → detalle |
 | `gastos` | id automático | `fecha`, `mes`, `monto`, `categoria`, `medio` (`efectivo` · `tarjeta:<id>`), `nota`, `autor` |
 
 Además, todos los registros guardan `creado` (mes en que se crearon, para no aparecer en meses anteriores) y `actualizado` (hora del servidor).
 
-**Claves de pago** dentro de `meses/{mes}.pagados`: `fijo_<id>`, `plazo_<id>`, `tarjeta_<id>`. El detalle de una tarjeta pagada guarda `monto`, `cuotas` y `plazos` (ids de las cuotas que se pagaron con ella) para poder revertir el pago exacto si se desmarca.
+**Cuotas en dinero.** Lo pagado de un plazo es `pagadas × cuota + abonado`. Así un abono mayor a la cuota baja lo que falta, y las cuotas pendientes son lo que falta ÷ cuota, redondeado hacia arriba (`domain/plazos.js`).
 
-## Ejemplo: qué pasa al marcar el pago de una tarjeta
+**Claves de pago** dentro de `meses/{mes}.pagados`: `fijo_<id>`, `plazo_<id>`, `tarjeta_<id>`. El detalle guarda lo necesario para revertir el pago exacto si se desmarca:
 
-1. La persona toca el círculo: `<button data-accion="marcar-pago" data-mes="2026-10" data-clave="tarjeta_abc">`.
-2. `acciones['marcar-pago']` en `vistas/pagos.js` llama a `alternarPago(mes, clave)` del repositorio.
-3. El repositorio le pide a `planificarPago()` (en `domain/presupuesto.js`, función pura) qué cambia: restar el pago del saldo, avanzar una cuota de cada compra a plazo cargada a esa tarjeta y guardar el detalle en el mes.
-4. El repositorio escribe todo en **un solo lote** (`writeBatch`), así no queda a medias.
-5. Firestore avisa a los `onSnapshot` de las dos personas y la pantalla se redibuja sola.
+| Pago | Detalle guardado |
+| --- | --- |
+| Gasto fijo | `fecha` |
+| Cuota | `fecha`, `monto` (lo pagado, puede ser más que la cuota), `medio` (`efectivo` · `planilla` · `tarjeta:<id>`) |
+| Tarjeta | `fecha`, `monto`, `tipo` (`contado` · `minimo` · `otro`) |
+
+Los pagos marcados con la primera versión (cuotas pagadas "junto con la tarjeta", con `via`, `cuotas` y `plazos`) se siguen leyendo y se pueden desmarcar.
+
+## Ejemplo: qué pasa al pagar una cuota con tarjeta
+
+1. La persona toca el círculo: `<button data-accion="marcar-pago" data-mes="2026-10" data-clave="plazo_abc">`.
+2. `acciones['marcar-pago']` en `formularios/pago.js` abre la ventana de pago con la cuota ya puesta. La persona sube el monto si abona más y elige la tarjeta.
+3. Al guardar se llama a `alternarPago(mes, clave, { monto, medio, fecha })` del repositorio.
+4. El repositorio le pide a `planificarPago()` (en `domain/presupuesto.js`, función pura) qué cambia: sumar el monto a `abonado` de la cuota, sumar el mismo monto al `saldo` de la tarjeta y guardar el detalle en el mes.
+5. El repositorio escribe todo en **un solo lote** (`writeBatch`), así no queda a medias.
+6. Firestore avisa a los `onSnapshot` de las dos personas y la pantalla se redibuja sola.
+
+En el resumen del mes, lo pagado con tarjeta no se resta de lo disponible: queda en el saldo de la tarjeta y se cubre cuando se paga la tarjeta.
+
+## Instalación en el teléfono
+
+`manifest.webmanifest` describe la app (nombre, íconos, colores) y `sw.js` es el *service worker*: guarda una copia de los archivos para que la app abra sin señal. Usa "primero la red", así que cada cambio que se sube a GitHub llega solo; la copia guardada solo se usa sin conexión. Si se cambia la forma de guardar en caché, hay que subir `VERSION` en `sw.js`.
 
 ## Cambios comunes
 
@@ -110,12 +127,14 @@ Además, todos los registros guardan `creado` (mes en que se crearon, para no ap
 `npm test` corre `node --test`, que encuentra los archivos `tests/*.test.js`. Prueban `domain/` y `utils/`. La interfaz se revisa a mano en el navegador; las piezas que conviene probar a mano después de un cambio:
 
 - Entrar, salir y entrar con una cuenta sin permiso.
-- Marcar y desmarcar el pago de una tarjeta con una cuota cargada.
+- Pagar una cuota con tarjeta abonando más que la cuota, y desmarcarla (el saldo de la tarjeta sube y vuelve).
+- Pagar una tarjeta con el mínimo y con otro monto.
 - Agregar y borrar un gasto con tarjeta (el saldo sube y baja).
-- Abrir la app en el teléfono, en modo claro y oscuro.
+- Agregar un ingreso de una sola vez y ver que solo cuenta en su mes.
+- Instalar la app en el teléfono y abrirla en modo claro y oscuro.
 
 ## Mejoras posibles
 
-- Un *service worker* para que la app abra sin señal aunque sea la primera vez del día (los datos ya funcionan sin señal gracias a la caché de Firestore).
 - Editar un gasto (hoy se borra y se vuelve a anotar).
+- Pedir el monto real al marcar gastos fijos que cambian cada mes (luz, agua).
 - Recordatorios de pago con notificaciones.
