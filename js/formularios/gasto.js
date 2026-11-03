@@ -47,10 +47,17 @@ export function abrirFormularioGasto(mes, idGasto) {
   const hoy = new Date();
   const fechaSugerida = !mes || mes === mesDe(hoy) ? fechaIso(hoy) : `${mes}-01`;
   const delCorreo = gasto?.origen === 'correo';
+  const parecido = gasto?.posibleRepetido
+    ? gastosDelMes(datos, mes).find((g) => g.id === gasto.posibleRepetido)
+    : null;
+  let intro = delCorreo ? 'Este gasto llegó solo del correo del banco. Revisen la categoría y la tarjeta.' : '';
+  if (parecido) {
+    intro = `Parece la misma compra que "${parecido.nota || parecido.categoria}" (${dinero(parecido.monto)}), anotada a mano. Si es la misma, eliminen una de las dos; si no, guarden y se quita la marca.`;
+  }
 
   abrirFormulario({
     titulo: gasto ? 'Editar gasto' : 'Agregar gasto',
-    intro: delCorreo ? 'Este gasto llegó solo del correo del banco. Revisen la categoría y la tarjeta.' : '',
+    intro,
     campos: campos(datos.tarjetas, fechaSugerida),
     valores: gasto || {},
     textoGuardar: gasto ? 'Guardar' : 'Agregar',

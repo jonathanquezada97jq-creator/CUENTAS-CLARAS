@@ -38,6 +38,8 @@ const estado = {
   /** Qué colecciones ya llegaron por primera vez. */
   cargadas: new Set(),
   datos: datosVacios(),
+  /** Lector de avisos del banco: lo pedido desde la app y el estado de cada cuenta (ver domain/lector.js). */
+  lector: { solicitud: null, cuentas: [] },
 };
 
 const oyentes = new Set();
@@ -75,5 +77,6 @@ export function vaciarDatos() {
   cambiar((e) => {
     e.datos = datosVacios();
     e.cargadas = new Set();
+    e.lector = { solicitud: null, cuentas: [] };
   });
 }

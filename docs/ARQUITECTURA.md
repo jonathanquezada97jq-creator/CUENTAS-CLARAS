@@ -75,7 +75,8 @@ Todo vive bajo `hogares/{HOGAR_ID}` (`HOGAR_ID` está en `js/config.js`).
 | `plazos` | id automático | `descripcion`, `acreedor`, `tipo`, `metodo` (cómo se paga normalmente: `efectivo` · `planilla` · `tarjeta:<id>`), `personaId`, `cuota`, `total`, `pagadas` (cuotas pagadas antes de anotarla), `abonado` (dinero pagado desde la app), `dia`, `tasa` |
 | `fijos` | id automático | `nombre`, `categoria`, `monto`, `dia` |
 | `meses` | `YYYY-MM` | `pagados`: mapa de clave de pago → detalle |
-| `gastos` | id automático, o `correo-<id>` si vino del correo | `fecha`, `mes`, `monto`, `categoria`, `medio` (`efectivo` · `tarjeta:<id>`), `nota`, `autor`, `origen` (`correo` si lo anotó el lector de avisos) |
+| `gastos` | id automático, o `correo-<id>` si vino del correo | `fecha`, `mes`, `monto`, `categoria`, `medio` (`efectivo` · `tarjeta:<id>`), `nota`, `autor`, `origen` (`correo` si lo anotó el lector de avisos), `posibleRepetido` (id de un gasto anotado a mano que parece el mismo), `descartado` (gasto del correo que se borró en la app) |
+| `lectorCorreo` | `solicitud` y `cuenta-<correo>` | Pedido de revisar un mes desde la app (`id`, `mes`, `pedidoEn`, `pedidoPor`) y estado de cada lector (`cuenta`, `ultimaRevision`, `solicitud`, `estado`, `nuevos`, `yaEstaban`, `sinTarjeta`, `posiblesRepetidos`, `mensaje`). Ver `domain/lector.js`. |
 
 Además, todos los registros guardan `creado` (mes en que se crearon, para no aparecer en meses anteriores) y `actualizado` (hora del servidor).
 
@@ -140,6 +141,8 @@ En el resumen del mes, lo pagado con tarjeta no se resta de lo disponible: queda
 Guarda los gastos con la misma forma que `agregarGasto()` del repositorio, más `origen: 'correo'`, con id `correo-<id del correo>` y `autor.nombre = 'Correo del banco'`. Si cambia la forma de un gasto en la app, hay que cambiarla también en `guardarGasto_()` del script.
 
 Las funciones que leen el texto del correo son puras y se prueban en Node (`tests/avisos-banco.test.js` carga el archivo con `node:vm`).
+
+La app y el script se comunican solo por Firestore: el botón **Buscar gastos del mes en los correos** (`vistas/pagos.js`) escribe `lectorCorreo/solicitud`; cada script lo atiende en su siguiente revisión y deja su resultado en `lectorCorreo/cuenta-<correo>`, que la app escucha (`observarLector()` en el repositorio) y resume con `estadoDelLector()` de `domain/lector.js`. Los gastos del correo que se borran en la app quedan `descartado` en lugar de borrarse, para que el script no los vuelva a crear; `gastosDelMes()` los oculta.
 
 ## Mejoras posibles
 

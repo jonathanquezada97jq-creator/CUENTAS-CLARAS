@@ -76,6 +76,26 @@ export function iniciarSincronizacion(manejadores) {
     );
     cancelaciones.push(cancelar);
   });
+  observarLector();
+}
+
+/** Escucha el estado del lector de avisos del banco (apps-script/Codigo.gs). */
+function observarLector() {
+  cancelaciones.push(
+    onSnapshot(
+      refColeccion('lectorCorreo'),
+      (foto) =>
+        cambiar((e) => {
+          // Se busca por el nombre del documento: la solicitud tiene además un campo `id` propio.
+          const solicitud = foto.docs.find((d) => d.id === 'solicitud');
+          e.lector = {
+            solicitud: solicitud ? solicitud.data() : null,
+            cuentas: foto.docs.filter((d) => d.id.startsWith('cuenta-')).map((d) => d.data()),
+          };
+        }),
+      errorDeLectura,
+    ),
+  );
 }
 
 /** Escucha los pagos marcados y los gastos de un mes. Llamarla dos veces no duplica nada. */
@@ -270,6 +290,8 @@ export function editarGasto(original, cambios) {
   lote.update(refDocumento('gastos', original.id), {
     ...cambios,
     mes,
+    // Si estaba marcado como posible repetido, al revisarlo y guardarlo se quita la marca.
+    ...(original.posibleRepetido ? { posibleRepetido: deleteField() } : {}),
     actualizado: serverTimestamp(),
   });
   Object.entries(deltas).forEach(([id, delta]) => {
@@ -285,12 +307,35 @@ export function editarGasto(original, cambios) {
 export function borrarGasto(gasto) {
   const { datos } = leer();
   const lote = writeBatch(db);
-  lote.delete(refDocumento('gastos', gasto.id));
+  if (gasto.origen === 'correo') {
+    // Se marca en lugar de borrarlo, para que el lector de correos no lo vuelva a anotar.
+    lote.update(refDocumento('gastos', gasto.id), { descartado: true, actualizado: serverTimestamp() });
+  } else {
+    lote.delete(refDocumento('gastos', gasto.id));
+  }
   const idTarjeta = idDeTarjeta(gasto.medio);
   if (idTarjeta && datos.tarjetas.some((t) => t.id === idTarjeta)) {
     lote.update(refDocumento('tarjetas', idTarjeta), { saldo: increment(-gasto.monto) });
   }
   sinEsperar(lote.commit());
+}
+
+/**
+ * Pide al lector de correos de cada cuenta que revise todos los avisos del
+ * banco de un mes. Cada lector lo atiende en su siguiente revisión
+ * (cada pocos minutos) y deja el resultado en lectorCorreo/cuenta-<correo>.
+ */
+export function pedirRevisionDeCorreos(mes) {
+  const { usuario } = leer();
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  sinEsperar(
+    setDoc(refDocumento('lectorCorreo', 'solicitud'), {
+      id,
+      mes,
+      pedidoEn: serverTimestamp(),
+      pedidoPor: usuario?.nombre || '',
+    }),
+  );
 }
 
 /* ------------------------------------------------------------------ */

@@ -9,10 +9,11 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const codigo = readFileSync(new URL('../apps-script/Codigo.gs', import.meta.url), 'utf8');
-const { leerAviso, adivinarCategoria, aNumero_ } = vm.runInNewContext(
-  `${codigo}\n;({ leerAviso, adivinarCategoria, aNumero_ })`,
-  {},
-);
+const { leerAviso, adivinarCategoria, aNumero_, buscarParecido, limitesDelMes, claveDeCuenta } =
+  vm.runInNewContext(
+    `${codigo}\n;({ leerAviso, adivinarCategoria, aNumero_, buscarParecido, limitesDelMes, claveDeCuenta })`,
+    {},
+  );
 
 test('aviso en una oración (estilo SMS o correo corto)', () => {
   const aviso = leerAviso(
@@ -73,4 +74,27 @@ test('categoría según el comercio', () => {
   assert.equal(adivinarCategoria('FARMACIA SAN NICOLAS'), 'Salud y farmacia');
   assert.equal(adivinarCategoria('POLLO CAMPERO METROCENTRO'), 'Comida fuera');
   assert.equal(adivinarCategoria('ALGO RARO SA DE CV'), 'Otros');
+});
+
+test('detecta una compra que ya se anotó a mano (mismo monto, ±1 día)', () => {
+  const gastos = [
+    { id: 'manual1', monto: 2, fecha: '2026-11-02', origen: undefined },
+    { id: 'correo-x', monto: 2, fecha: '2026-11-03', origen: 'correo' },
+    { id: 'manual2', monto: 15, fecha: '2026-11-03', descartado: true },
+  ];
+  assert.equal(buscarParecido(gastos, 2, '2026-11-03'), 'manual1');
+  assert.equal(buscarParecido(gastos, 2, '2026-11-05'), null, 'más de un día de diferencia');
+  assert.equal(buscarParecido(gastos, 15, '2026-11-03'), null, 'los descartados no cuentan');
+  assert.equal(buscarParecido(gastos, 2.5, '2026-11-02'), null, 'otro monto');
+});
+
+test('límites del mes en hora de El Salvador', () => {
+  const { inicio, fin } = limitesDelMes('2026-11', '-06:00');
+  assert.equal(new Date(inicio * 1000).toISOString(), '2026-11-01T06:00:00.000Z');
+  assert.equal(new Date(fin * 1000).toISOString(), '2026-12-01T06:00:00.000Z');
+  assert.equal(new Date(limitesDelMes('2026-12', '-06:00').fin * 1000).toISOString(), '2027-01-01T06:00:00.000Z');
+});
+
+test('clave de cada cuenta para su documento de estado', () => {
+  assert.equal(claveDeCuenta('Ana.Lopez@gmail.com'), 'ana-lopez-gmail-com');
 });

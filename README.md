@@ -100,7 +100,7 @@ Cada uno entra con su propia cuenta de Google. Los datos son los mismos para los
 
 ## Gastos automáticos desde los avisos del banco
 
-Un script de Google lee en Gmail los avisos de compra con tarjeta ("Compra por USD 2.00 en PUMA DIDEA, tarjeta terminada en 1234") y los anota solos como gasto, sumados al saldo de la tarjeta. La instalación toma unos 10 minutos: [`docs/AVISOS-DEL-BANCO.md`](docs/AVISOS-DEL-BANCO.md).
+Un script de Google lee en Gmail los avisos de compra con tarjeta ("Compra por USD 2.00 en PUMA DIDEA, tarjeta terminada en 1234") y los anota solos como gasto, sumados al saldo de la tarjeta. Desde **Pagos** se le puede pedir que revise todos los correos del mes, para anotar los que se fueron de paso. Cada persona lo instala en su cuenta en unos 10 minutos: [`docs/AVISOS-DEL-BANCO.md`](docs/AVISOS-DEL-BANCO.md).
 
 ---
 
