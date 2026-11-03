@@ -75,7 +75,7 @@ Todo vive bajo `hogares/{HOGAR_ID}` (`HOGAR_ID` está en `js/config.js`).
 | `plazos` | id automático | `descripcion`, `acreedor`, `tipo`, `metodo` (cómo se paga normalmente: `efectivo` · `planilla` · `tarjeta:<id>`), `personaId`, `cuota`, `total`, `pagadas` (cuotas pagadas antes de anotarla), `abonado` (dinero pagado desde la app), `dia`, `tasa` |
 | `fijos` | id automático | `nombre`, `categoria`, `monto`, `dia` |
 | `meses` | `YYYY-MM` | `pagados`: mapa de clave de pago → detalle |
-| `gastos` | id automático | `fecha`, `mes`, `monto`, `categoria`, `medio` (`efectivo` · `tarjeta:<id>`), `nota`, `autor` |
+| `gastos` | id automático, o `correo-<id>` si vino del correo | `fecha`, `mes`, `monto`, `categoria`, `medio` (`efectivo` · `tarjeta:<id>`), `nota`, `autor`, `origen` (`correo` si lo anotó el lector de avisos) |
 
 Además, todos los registros guardan `creado` (mes en que se crearon, para no aparecer en meses anteriores) y `actualizado` (hora del servidor).
 
@@ -133,8 +133,15 @@ En el resumen del mes, lo pagado con tarjeta no se resta de lo disponible: queda
 - Agregar un ingreso de una sola vez y ver que solo cuenta en su mes.
 - Instalar la app en el teléfono y abrirla en modo claro y oscuro.
 
+## Gastos que llegan del correo
+
+`apps-script/Codigo.gs` no es parte de la app: corre en Google Apps Script con la cuenta del dueño del proyecto (instalación en `docs/AVISOS-DEL-BANCO.md`). Lee los avisos del banco en Gmail y escribe en Firestore con la API REST, sin pasar por las reglas de `firestore.rules` (usa los permisos de la cuenta dueña del proyecto).
+
+Guarda los gastos con la misma forma que `agregarGasto()` del repositorio, más `origen: 'correo'`, con id `correo-<id del correo>` y `autor.nombre = 'Correo del banco'`. Si cambia la forma de un gasto en la app, hay que cambiarla también en `guardarGasto_()` del script.
+
+Las funciones que leen el texto del correo son puras y se prueban en Node (`tests/avisos-banco.test.js` carga el archivo con `node:vm`).
+
 ## Mejoras posibles
 
-- Editar un gasto (hoy se borra y se vuelve a anotar).
 - Pedir el monto real al marcar gastos fijos que cambian cada mes (luz, agua).
 - Recordatorios de pago con notificaciones.

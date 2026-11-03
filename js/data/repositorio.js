@@ -249,6 +249,38 @@ export function agregarGasto(gasto) {
   observarMes(mes);
 }
 
+/**
+ * Cambia un gasto (monto, fecha, categoría, tarjeta, nota). Si cambió el
+ * monto o la tarjeta, ajusta los saldos: lo quita de la tarjeta anterior y
+ * lo suma a la nueva.
+ * @param {Object} original  El gasto como está guardado (con su id).
+ * @param {{fecha:string, monto:number, categoria:string, medio:string, nota:string}} cambios
+ */
+export function editarGasto(original, cambios) {
+  const { datos } = leer();
+  const existeTarjeta = (id) => id && datos.tarjetas.some((t) => t.id === id);
+  const deltas = {};
+  const anterior = idDeTarjeta(original.medio);
+  const nueva = idDeTarjeta(cambios.medio);
+  if (existeTarjeta(anterior)) deltas[anterior] = (deltas[anterior] || 0) - Number(original.monto || 0);
+  if (existeTarjeta(nueva)) deltas[nueva] = (deltas[nueva] || 0) + Number(cambios.monto || 0);
+
+  const mes = cambios.fecha.slice(0, 7);
+  const lote = writeBatch(db);
+  lote.update(refDocumento('gastos', original.id), {
+    ...cambios,
+    mes,
+    actualizado: serverTimestamp(),
+  });
+  Object.entries(deltas).forEach(([id, delta]) => {
+    if (Math.abs(delta) > 0.0001) {
+      lote.update(refDocumento('tarjetas', id), { saldo: increment(delta) });
+    }
+  });
+  sinEsperar(lote.commit());
+  observarMes(mes);
+}
+
 /** Borra un gasto y, si fue con tarjeta, lo resta del saldo. */
 export function borrarGasto(gasto) {
   const { datos } = leer();

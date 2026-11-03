@@ -98,6 +98,12 @@ Cada uno entra con su propia cuenta de Google. Los datos son los mismos para los
 
 ---
 
+## Gastos automáticos desde los avisos del banco
+
+Un script de Google lee en Gmail los avisos de compra con tarjeta ("Compra por USD 2.00 en PUMA DIDEA, tarjeta terminada en 1234") y los anota solos como gasto, sumados al saldo de la tarjeta. La instalación toma unos 10 minutos: [`docs/AVISOS-DEL-BANCO.md`](docs/AVISOS-DEL-BANCO.md).
+
+---
+
 ## Pasar los datos de la versión anterior
 
 Si ya usaban la versión que se hizo dentro de Claude:
@@ -173,8 +179,10 @@ js/
   ui/                      Piezas de interfaz reutilizables
   formularios/             Un formulario por tipo de registro; pago.js marca los pagos
   vistas/                  Una vista por pestaña, más pantallas y ajustes
+apps-script/                Lector de avisos del banco (corre en Google Apps Script, no en la app)
 tests/                     Pruebas con node:test
 docs/ARQUITECTURA.md       Reglas del código, flujo de datos y modelo de datos
+docs/AVISOS-DEL-BANCO.md   Instalar el lector de avisos del banco
 ```
 
 Antes de cambiar algo, leé [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md): explica las reglas que sigue el código y cómo hacer los cambios más comunes.

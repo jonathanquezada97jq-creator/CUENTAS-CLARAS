@@ -1,8 +1,13 @@
-/** Formulario rápido para anotar un gasto del día a día. */
+/**
+ * Formulario para anotar o corregir un gasto del día a día. Los gastos que
+ * llegan solos del correo del banco (apps-script/) también se corrigen aquí:
+ * por ejemplo, para cambiarles la categoría o la tarjeta.
+ */
 import { abrirFormulario } from '../ui/formulario.js';
 import { leer } from '../state/store.js';
-import { agregarGasto } from '../data/repositorio.js';
+import { agregarGasto, borrarGasto, editarGasto } from '../data/repositorio.js';
 import { CATEGORIAS_GASTO } from '../constants/catalogos.js';
+import { gastosDelMes } from '../domain/presupuesto.js';
 import { referenciaTarjeta } from '../domain/tarjetas.js';
 import { nombreTarjeta } from '../ui/componentes.js';
 import { avisar } from '../ui/aviso.js';
@@ -26,27 +31,50 @@ function campos(tarjetas, fechaSugerida) {
   ];
 }
 
-/** @param {string} [mes]  Mes que se está viendo; la fecha sugerida cae en ese mes. */
-export function abrirFormularioGasto(mes) {
+function validar(v) {
+  if (!(v.monto > 0)) return 'Escribí cuánto gastaron.';
+  if (!leerFecha(v.fecha)) return 'Elegí una fecha.';
+  return undefined;
+}
+
+/**
+ * @param {string} [mes]  Mes que se está viendo; la fecha sugerida cae en ese mes.
+ * @param {string} [idGasto]  Para corregir un gasto que ya existe.
+ */
+export function abrirFormularioGasto(mes, idGasto) {
   const { datos } = leer();
+  const gasto = idGasto ? gastosDelMes(datos, mes).find((g) => g.id === idGasto) : null;
   const hoy = new Date();
   const fechaSugerida = !mes || mes === mesDe(hoy) ? fechaIso(hoy) : `${mes}-01`;
+  const delCorreo = gasto?.origen === 'correo';
+
   abrirFormulario({
-    titulo: 'Agregar gasto',
+    titulo: gasto ? 'Editar gasto' : 'Agregar gasto',
+    intro: delCorreo ? 'Este gasto llegó solo del correo del banco. Revisen la categoría y la tarjeta.' : '',
     campos: campos(datos.tarjetas, fechaSugerida),
-    textoGuardar: 'Agregar',
-    validar: (v) => {
-      if (!(v.monto > 0)) return 'Escribí cuánto gastaron.';
-      if (!leerFecha(v.fecha)) return 'Elegí una fecha.';
-      return undefined;
-    },
+    valores: gasto || {},
+    textoGuardar: gasto ? 'Guardar' : 'Agregar',
+    validar,
     alGuardar: (v) => {
-      agregarGasto({ ...v, monto: redondear(v.monto) });
-      avisar(`Gasto de ${dinero(v.monto)} agregado.`);
+      const cambios = { ...v, monto: redondear(v.monto) };
+      if (gasto) {
+        editarGasto(gasto, cambios);
+        avisar('Gasto actualizado.');
+      } else {
+        agregarGasto(cambios);
+        avisar(`Gasto de ${dinero(v.monto)} agregado.`);
+      }
     },
+    alEliminar: gasto
+      ? () => {
+          borrarGasto(gasto);
+          avisar('Gasto borrado.');
+        }
+      : null,
   });
 }
 
 export const acciones = {
   'nuevo-gasto': (boton) => abrirFormularioGasto(boton.dataset.mes),
+  'editar-gasto': (boton) => abrirFormularioGasto(boton.dataset.mes, boton.dataset.id),
 };

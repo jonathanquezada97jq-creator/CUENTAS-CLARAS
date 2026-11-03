@@ -77,7 +77,7 @@ function seccionGastos(datos, mes) {
       const quien = g.autor?.nombre ? ` · ${g.autor.nombre.split(' ')[0]}` : '';
       const titulo = g.nota || g.categoria;
       return `<li class="lista__fila">
-        <div class="lista__principal"><div class="lista__titulo">${esc(titulo)}</div><div class="lista__detalle">${fecha ? fechaCorta(fecha) : ''} · ${esc(g.categoria)} · ${esc(textoMedio(g.medio, datos.tarjetas))}${esc(quien)}</div></div>
+        <button type="button" class="lista__enlace" data-accion="editar-gasto" data-mes="${mes}" data-id="${esc(g.id)}"><div class="lista__titulo">${esc(titulo)}</div><div class="lista__detalle">${fecha ? fechaCorta(fecha) : ''} · ${esc(g.categoria)} · ${esc(textoMedio(g.medio, datos.tarjetas))}${esc(quien)}</div></button>
         <span class="monto">${dinero(g.monto)}</span>
         <button type="button" class="lista__borrar" data-accion="borrar-gasto" data-mes="${mes}" data-id="${esc(g.id)}" aria-label="Borrar gasto ${esc(titulo)}">${ICONOS.cerrar}</button>
       </li>`;
