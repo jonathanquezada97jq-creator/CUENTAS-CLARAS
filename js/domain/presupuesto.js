@@ -43,7 +43,11 @@ export function leerClavePago(clave) {
 
 const buscar = (lista, id) => lista.find((x) => x.id === id);
 const pagadosDelMes = (datos, mes) => datos.pagados?.[mes] ?? {};
-export const gastosDelMes = (datos, mes) => datos.gastos?.[mes] ?? [];
+/**
+ * Gastos del mes. Los que llegaron del correo y se borraron quedan guardados
+ * como `descartado` (para que el lector no los vuelva a anotar) y no se muestran.
+ */
+export const gastosDelMes = (datos, mes) => (datos.gastos?.[mes] ?? []).filter((g) => !g.descartado);
 
 /** Un registro cuenta desde el mes en que se creó, no antes. */
 export const estaVigente = (registro, mes) => !registro.creado || mes >= registro.creado;

@@ -144,7 +144,7 @@ function ultimosGastos(datos, mes) {
             .map((g) => {
               const fecha = leerFecha(g.fecha);
               const quien = g.autor?.nombre ? ` · ${g.autor.nombre.split(' ')[0]}` : '';
-              return `<li class="lista__fila"><div class="lista__principal"><div class="lista__titulo">${esc(g.nota || g.categoria)}</div><div class="lista__detalle">${fecha ? fechaCorta(fecha) : ''} · ${esc(g.categoria)}${esc(quien)}</div></div><span class="monto">${dinero(g.monto)}</span></li>`;
+              return `<li class="lista__fila"><button type="button" class="lista__enlace" data-accion="editar-gasto" data-mes="${mes}" data-id="${esc(g.id)}"><div class="lista__titulo">${esc(g.nota || g.categoria)}</div><div class="lista__detalle">${fecha ? fechaCorta(fecha) : ''} · ${esc(g.categoria)}${esc(quien)}</div></button><span class="monto">${dinero(g.monto)}</span></li>`;
             })
             .join('')}</ul>`
         : '<p class="nota">Anoten lo que gastan en el día: súper, gasolina, salidas. El otro lo ve al instante.</p>'
