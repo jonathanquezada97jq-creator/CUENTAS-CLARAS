@@ -10,9 +10,13 @@ export const COLECCIONES_PRINCIPALES = Object.freeze([
   'personas',
   'ingresos',
   'tarjetas',
+  'cuentas',
   'plazos',
   'fijos',
 ]);
+
+/** Colecciones que se guardan por mes (cada registro lleva su campo `mes`). */
+export const COLECCIONES_POR_MES = Object.freeze(['gastos', 'movimientos']);
 
 /** Campos que pone la base de datos y no hace falta respaldar. */
 const CAMPOS_INTERNOS = ['actualizado', 'creadoEn'];
@@ -30,8 +34,8 @@ const esMes = (texto) => /^\d{4}-\d{2}$/.test(texto);
 
 /**
  * Arma el objeto de respaldo.
- * @param {Object} todo  {personas, ingresos, tarjetas, plazos, fijos, meses, gastos}
- *   donde `meses` es mes → {pagados} y `gastos` es una lista.
+ * @param {Object} todo  {personas, ingresos, tarjetas, cuentas, plazos, fijos, meses, gastos, movimientos}
+ *   donde `meses` es mes → {pagados}, y `gastos` y `movimientos` son listas.
  * @param {string} fecha  "YYYY-MM-DD".
  */
 export function crearRespaldo(todo, fecha) {
@@ -40,15 +44,18 @@ export function crearRespaldo(todo, fecha) {
     respaldo[nombre] = (todo[nombre] || []).map(sinCamposInternos);
   });
   respaldo.meses = todo.meses || {};
-  respaldo.gastos = (todo.gastos || []).map(sinCamposInternos);
+  COLECCIONES_POR_MES.forEach((nombre) => {
+    respaldo[nombre] = (todo[nombre] || []).map(sinCamposInternos);
+  });
   return respaldo;
 }
 
 /**
  * @typedef {Object} RespaldoLeido
- * @property {Object<string, Object[]>} colecciones  personas, ingresos, tarjetas, plazos, fijos.
+ * @property {Object<string, Object[]>} colecciones  personas, ingresos, tarjetas, cuentas, plazos, fijos.
  * @property {Object<string, {pagados:Object}>} meses
  * @property {Object[]} gastos  Cada uno con su campo `mes`.
+ * @property {Object[]} movimientos  Cada uno con su campo `mes`.
  */
 
 /**
@@ -74,8 +81,10 @@ function leerVersion2(respaldo) {
   Object.entries(respaldo.meses || {}).forEach(([mes, contenido]) => {
     if (esMes(mes)) meses[mes] = { pagados: contenido?.pagados || {} };
   });
+  // Los respaldos anteriores a las cuentas de banco no traen cuentas ni movimientos.
   const gastos = conIdValido(respaldo.gastos).filter((g) => esMes(g.mes));
-  return { colecciones, meses, gastos };
+  const movimientos = conIdValido(respaldo.movimientos).filter((m) => esMes(m.mes));
+  return { colecciones, meses, gastos, movimientos };
 }
 
 /**
@@ -118,10 +127,12 @@ function convertirVersion1({ main, meses = {} }, nombrePersona) {
       personas,
       ingresos: conIdValido(main.ingresos),
       tarjetas: conIdValido(main.tarjetas),
+      cuentas: [],
       plazos,
       fijos: conIdValido(main.fijos),
     },
     meses: mesesNuevos,
     gastos,
+    movimientos: [],
   };
 }

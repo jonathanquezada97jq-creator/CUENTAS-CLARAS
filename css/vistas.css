@@ -125,7 +125,7 @@
 
 @media (min-width: 620px) {
   .cifras {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   }
 }
 
@@ -161,6 +161,16 @@
   margin: 0;
   font-size: 12.5px;
   color: var(--texto-suave);
+}
+
+/* La cifra "En sus cuentas" lleva a Bancos. */
+.cifra--enlace {
+  color: inherit;
+  text-decoration: none;
+}
+
+.cifra--enlace:hover {
+  border-color: var(--linea-fuerte, var(--linea));
 }
 
 /* ---------- Pagos: navegación por mes y categorías ---------- */
@@ -208,6 +218,127 @@
   height: 100%;
   background: var(--acento);
   border-radius: 99px;
+}
+
+/* ---------- Bancos: cuentas ---------- */
+
+.cuentas {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 640px) {
+  .cuentas {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Una cuenta: tarjeta clara con una franja del color elegido arriba. */
+.cuenta {
+  --color-cuenta: var(--tarjeta-bosque);
+  background: var(--superficie);
+  border: 1px solid var(--linea);
+  border-top: 6px solid var(--color-cuenta);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cuenta--cobalto { --color-cuenta: var(--tarjeta-cobalto); }
+.cuenta--vino { --color-cuenta: var(--tarjeta-vino); }
+.cuenta--bosque { --color-cuenta: var(--tarjeta-bosque); }
+.cuenta--grafito { --color-cuenta: var(--tarjeta-grafito); }
+.cuenta--maiz { --color-cuenta: var(--tarjeta-maiz); }
+
+.cuenta__arriba {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.cuenta__banco {
+  font-family: var(--fuente-datos);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+}
+
+.cuenta__nombre {
+  font-family: var(--fuente-titulos);
+  font-stretch: 112%;
+  font-weight: 740;
+  font-size: 16px;
+  margin-top: 2px;
+}
+
+.cuenta__numeros {
+  font-family: var(--fuente-datos);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cuenta__debito {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--texto-suave);
+  margin-top: 2px;
+}
+
+.cuenta__saldo {
+  display: flex;
+  flex-direction: column;
+}
+
+.cuenta__saldo-etiqueta {
+  font-family: var(--fuente-datos);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+}
+
+.cuenta__saldo b {
+  font-family: var(--fuente-titulos);
+  font-stretch: 112%;
+  font-weight: 820;
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.cuenta__flujo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: 13px;
+  color: var(--texto-suave);
+}
+
+.cuenta__flujo b {
+  color: var(--texto);
+  font-variant-numeric: tabular-nums;
+}
+
+.cuenta .nota {
+  margin: 0;
+}
+
+.cuenta__acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cuenta__acciones .boton--fantasma {
+  margin-left: auto;
 }
 
 /* ---------- Tarjetas de crédito ---------- */

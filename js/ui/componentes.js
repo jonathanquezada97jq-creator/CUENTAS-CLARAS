@@ -1,17 +1,19 @@
 /**
- * Piezas de HTML que usan varias vistas: botones, bloques vacíos, la fila
- * de un pago y la boleta de salario.
+ * Piezas de HTML que usan varias vistas: botones, bloques vacíos, nombres
+ * de cuentas y tarjetas, la fila de un pago o de un movimiento y la boleta
+ * de salario.
  *
  * Regla: todo texto que viene de la persona (nombres, notas) pasa por
  * `esc()` antes de entrar al HTML.
  */
 import { escaparHtml as esc, dinero, redondear, sumar, aNumero } from '../utils/formato.js';
-import { cuandoEs, diferenciaDias, mesCorto, mesDe } from '../utils/fechas.js';
+import { cuandoEs, diferenciaDias, fechaCorta, leerFecha, mesCorto, mesDe } from '../utils/fechas.js';
 import { ICONOS } from './iconos.js';
 import { calcularSalario, TIPO_SALARIO } from '../domain/salario.js';
 import { descuentosDePlanilla, pagosAlMes, TIPO_PAGO } from '../domain/presupuesto.js';
 import { cuotaDelMes } from '../domain/plazos.js';
-import { idDeTarjeta } from '../domain/tarjetas.js';
+import { idDeTarjeta, referenciaTarjeta } from '../domain/tarjetas.js';
+import { EXTREMO, idDeCuenta, referenciaCuenta, tipoDeMovimiento, TIPO_MOVIMIENTO } from '../domain/cuentas.js';
 import { AGUINALDO } from '../constants/ley-sv.js';
 import { TIPOS_PAGO_TARJETA } from '../constants/catalogos.js';
 
@@ -51,6 +53,42 @@ export function nombreTarjeta(tarjeta) {
   return `Tarjeta ${tarjeta.banco}${tarjeta.ultimos ? ` ••${tarjeta.ultimos}` : ''}`;
 }
 
+/** "Banco Cuscatlán ••1421". */
+export function nombreCuenta(cuenta) {
+  return `${cuenta.banco}${cuenta.ultimos ? ` ••${cuenta.ultimos}` : ''}`;
+}
+
+const buscarPorId = (lista, id) => (lista || []).find((x) => x.id === id);
+
+/** Nombre de una referencia: "tarjeta:<id>", "cuenta:<id>", "efectivo" o "externo". */
+export function nombreDeReferencia(referencia, datos) {
+  const idTarjeta = idDeTarjeta(referencia);
+  if (idTarjeta) {
+    const tarjeta = buscarPorId(datos.tarjetas, idTarjeta);
+    return tarjeta ? nombreTarjeta(tarjeta) : 'Tarjeta borrada';
+  }
+  const idCuenta = idDeCuenta(referencia);
+  if (idCuenta) {
+    const cuenta = buscarPorId(datos.cuentas, idCuenta);
+    return cuenta ? nombreCuenta(cuenta) : 'Cuenta borrada';
+  }
+  return referencia === EXTREMO.EFECTIVO ? 'Efectivo' : 'Otra cuenta o persona';
+}
+
+/**
+ * Opciones para elegir con qué se pagó: efectivo, el débito de cada cuenta
+ * y cada tarjeta de crédito.
+ * @param {Object} datos
+ * @param {{efectivo?: string, tarjetas?: boolean, prefijoCuenta?: string}} [opciones]
+ */
+export function opcionesDeMedio(datos, { efectivo = 'Efectivo', tarjetas = true, prefijoCuenta = 'Débito · ' } = {}) {
+  return [
+    ['efectivo', efectivo],
+    ...(datos.cuentas || []).map((c) => [referenciaCuenta(c.id), `${prefijoCuenta}${nombreCuenta(c)}`]),
+    ...(tarjetas ? datos.tarjetas.map((t) => [referenciaTarjeta(t.id), nombreTarjeta(t)]) : []),
+  ];
+}
+
 /** Cifra grande con los centavos más pequeños. */
 export function cifraGrande(valor) {
   const n = redondear(valor);
@@ -66,28 +104,42 @@ function nombreDelPago(pago) {
   return pago.registro.nombre;
 }
 
-/** "en efectivo", "por planilla", "con Tarjeta BAC ••1107". */
-export function textoMedio(medio, tarjetas) {
-  const idTarjeta = idDeTarjeta(medio);
-  if (idTarjeta) {
-    const tarjeta = tarjetas.find((t) => t.id === idTarjeta);
-    return tarjeta ? `con ${nombreTarjeta(tarjeta)}` : 'con tarjeta';
-  }
+/** "en efectivo", "por planilla", "con Tarjeta BAC ••1107", "con débito de BAC ••8320". */
+export function textoMedio(medio, datos) {
+  if (idDeTarjeta(medio)) return `con ${nombreDeReferencia(medio, datos)}`;
+  if (idDeCuenta(medio)) return `con débito de ${nombreDeReferencia(medio, datos)}`;
   return medio === 'planilla' ? 'por planilla' : 'en efectivo';
+}
+
+function detalleDeTarjetaPagada(pago, datos) {
+  const partes = [];
+  if (pago.registrado) {
+    const como = TIPOS_PAGO_TARJETA[pago.tipoDePago] || 'Pagada';
+    partes.push(idDeCuenta(pago.desde) ? `${como} desde ${nombreDeReferencia(pago.desde, datos)}` : como);
+  }
+  (pago.transferencias || []).forEach((m) => {
+    partes.push(idDeCuenta(m.desde) ? `Transferencia desde ${nombreDeReferencia(m.desde, datos)}` : 'Transferencia');
+  });
+  return partes.join(' + ') || 'Pagada';
 }
 
 function detalleDelPago(pago, esMesActual, datos) {
   const r = pago.registro;
-  if (pago.tipo === TIPO_PAGO.FIJO) return r.categoria || 'Gasto fijo';
+  if (pago.tipo === TIPO_PAGO.FIJO) {
+    const medio = pago.pagado ? pago.medio : r.medio;
+    return [r.categoria || 'Gasto fijo', idDeCuenta(medio) ? `desde ${nombreDeReferencia(medio, datos)}` : '']
+      .filter(Boolean)
+      .join(' · ');
+  }
   if (pago.tipo === TIPO_PAGO.PLAZO) {
     const estado = pago.pagado
-      ? `pagada ${textoMedio(pago.medio, datos.tarjetas)}`
+      ? `pagada ${textoMedio(pago.medio, datos)}`
       : [esMesActual ? `cuota ${pago.numeroCuota} de ${r.total}` : 'cuota mensual', pago.porPlanilla ? 'por planilla' : '']
           .filter(Boolean)
           .join(' · ');
     return [r.acreedor, estado].filter(Boolean).join(' · ');
   }
-  if (pago.pagado) return TIPOS_PAGO_TARJETA[pago.tipoDePago] || 'Pagada';
+  if (pago.pagado) return detalleDeTarjetaPagada(pago, datos);
   return pago.minimo ? `Contado · mínimo ${dinero(pago.minimo)}` : 'Pago de contado';
 }
 
@@ -118,6 +170,48 @@ export function filaPago(pago, hoy, datos) {
       <div class="pago__detalle">${esc(detalleDelPago(pago, mes === mesDe(hoy), datos))}</div>
     </div>
     <div class="pago__final"><span class="monto">${dinero(pago.monto)}</span>${chipDelPago(pago, hoy)}</div>
+  </li>`;
+}
+
+/* ---------- Fila de un movimiento entre cuentas ---------- */
+
+/** "Transferencia entre cuentas", "Pago de tarjeta", "Depósito", "Retiro en efectivo"… */
+export function tituloMovimiento(movimiento) {
+  switch (tipoDeMovimiento(movimiento)) {
+    case TIPO_MOVIMIENTO.TRANSFERENCIA:
+      return 'Transferencia entre cuentas';
+    case TIPO_MOVIMIENTO.PAGO_TARJETA:
+      return 'Pago de tarjeta';
+    case TIPO_MOVIMIENTO.DEPOSITO:
+      return movimiento.desde === EXTREMO.EFECTIVO ? 'Depósito en efectivo' : 'Entró dinero';
+    default:
+      return movimiento.hacia === EXTREMO.EFECTIVO ? 'Retiro en efectivo' : 'Salió dinero';
+  }
+}
+
+/** Signo del monto: + si entra a una cuenta desde afuera, − si sale hacia afuera. */
+function signoDeMovimiento(movimiento) {
+  const tipo = tipoDeMovimiento(movimiento);
+  if (tipo === TIPO_MOVIMIENTO.DEPOSITO) return '+';
+  if (tipo === TIPO_MOVIMIENTO.RETIRO) return '−';
+  return '';
+}
+
+/**
+ * Fila de un movimiento: de dónde a dónde, la nota y quién lo anotó.
+ * Tocarla abre el formulario para corregirlo; la X lo borra.
+ */
+export function filaMovimiento(movimiento, datos, mes) {
+  const fecha = leerFecha(movimiento.fecha);
+  const quien = movimiento.autor?.nombre ? ` · ${movimiento.autor.nombre.split(' ')[0]}` : '';
+  const ruta = `${nombreDeReferencia(movimiento.desde, datos)} → ${nombreDeReferencia(movimiento.hacia, datos)}`;
+  const detalle = [fecha ? fechaCorta(fecha) : '', ruta, movimiento.nota].filter(Boolean).join(' · ');
+  const titulo = tituloMovimiento(movimiento);
+  const repetido = movimiento.posibleRepetido ? ` ${chip('¿Repetido?', 'aviso')}` : '';
+  return `<li class="lista__fila">
+    <button type="button" class="lista__enlace" data-accion="editar-movimiento" data-mes="${esc(mes)}" data-id="${esc(movimiento.id)}"><div class="lista__titulo">${esc(titulo)}${repetido}</div><div class="lista__detalle">${esc(detalle + quien)}</div></button>
+    <span class="monto">${signoDeMovimiento(movimiento)}${dinero(movimiento.monto)}</span>
+    <button type="button" class="lista__borrar" data-accion="borrar-movimiento" data-mes="${esc(mes)}" data-id="${esc(movimiento.id)}" aria-label="Borrar ${esc(titulo)}">${ICONOS.cerrar}</button>
   </li>`;
 }
 

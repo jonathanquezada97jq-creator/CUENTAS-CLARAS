@@ -8,10 +8,22 @@ import { avisar } from '../ui/aviso.js';
 import { leer } from '../state/store.js';
 import { guardarRegistro, eliminarRegistro } from '../data/repositorio.js';
 import { FRECUENCIAS_INGRESO, TIPOS_INGRESO } from '../constants/catalogos.js';
+import { nombreCuenta } from '../ui/componentes.js';
 import { dinero } from '../utils/formato.js';
 import { esDiaDelMes, fechaIso, leerFecha, mesDe } from '../utils/fechas.js';
 
-function campos(fechaSugerida) {
+function campos(fechaSugerida, cuentas) {
+  const cuenta = cuentas.length
+    ? [
+        {
+          nombre: 'cuentaId',
+          etiqueta: '¿A qué cuenta entra?',
+          tipo: 'lista',
+          opciones: [['', 'Ninguna (en efectivo)'], ...cuentas.map((c) => [c.id, nombreCuenta(c)])],
+          porDefecto: '',
+        },
+      ]
+    : [];
   return [
     { nombre: 'nombre', etiqueta: 'Descripción', requerido: true, ejemplo: 'Venta de ropa, servicio de diseño, remesa…' },
     { nombre: 'monto', etiqueta: 'Monto', tipo: 'dinero', requerido: true, medio: true },
@@ -33,6 +45,7 @@ function campos(fechaSugerida) {
       ejemplo: '5',
       mostrarSi: ['frecuencia', ['mensual', 'quincenal']],
     },
+    ...cuenta,
   ];
 }
 
@@ -50,14 +63,15 @@ function validar(v) {
  *   frecuencia: la opción que aparece elegida al crear uno nuevo.
  */
 export function abrirFormularioIngreso(id, { mes, frecuencia = 'unica' } = {}) {
-  const ingreso = id ? leer().datos.ingresos.find((i) => i.id === id) : null;
+  const { datos } = leer();
+  const ingreso = id ? datos.ingresos.find((i) => i.id === id) : null;
   const hoy = new Date();
   const fechaSugerida = !mes || mes === mesDe(hoy) ? fechaIso(hoy) : `${mes}-01`;
   const nuevo = { frecuencia, tipo: frecuencia === 'unica' ? 'venta' : 'remesa' };
   abrirFormulario({
     titulo: ingreso ? 'Editar ingreso' : 'Agregar ingreso',
     intro: ingreso ? '' : 'Una venta, un servicio, una remesa. Si se repite cada mes o cada quincena, marcalo abajo.',
-    campos: campos(fechaSugerida),
+    campos: campos(fechaSugerida, datos.cuentas),
     valores: ingreso || nuevo,
     validar,
     alGuardar: (valores) => {

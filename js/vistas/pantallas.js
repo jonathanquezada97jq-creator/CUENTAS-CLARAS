@@ -19,7 +19,7 @@ export function pantallaEntrada() {
   return `<section class="pantalla">
     <span class="etiqueta">Finanzas del hogar · El Salvador</span>
     <h1>Las cuentas de la casa, claras y compartidas</h1>
-    <p>Salarios con ISSS, AFP y renta, tarjetas, cuotas y pagos del mes. Lo que uno anota, el otro lo ve al instante.</p>
+    <p>Salarios con ISSS, AFP y renta, cuentas de banco, tarjetas, cuotas y pagos del mes. Lo que uno anota, el otro lo ve al instante.</p>
     <button type="button" class="boton boton--grande" data-accion="entrar">${ICONOS.google}Entrar con Google</button>
     <p class="nota">Solo las cuentas autorizadas pueden ver los datos.</p>
   </section>`;

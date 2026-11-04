@@ -5,14 +5,16 @@ import { guardarRegistro, eliminarRegistro } from '../data/repositorio.js';
 import { ACREEDORES, TIPOS_PLAZO } from '../constants/catalogos.js';
 import { METODO } from '../domain/plazos.js';
 import { referenciaTarjeta } from '../domain/tarjetas.js';
-import { nombreTarjeta } from '../ui/componentes.js';
+import { referenciaCuenta } from '../domain/cuentas.js';
+import { nombreCuenta, nombreTarjeta } from '../ui/componentes.js';
 import { esDiaDelMes } from '../utils/fechas.js';
 import { aNumero, dinero } from '../utils/formato.js';
 
-function campos({ tarjetas, personas }) {
+function campos({ tarjetas, cuentas, personas }) {
   const metodos = [
-    [METODO.DIRECTO, 'En efectivo, débito o transferencia'],
+    [METODO.DIRECTO, cuentas.length ? 'En efectivo' : 'En efectivo, débito o transferencia'],
     [METODO.PLANILLA, 'Descuento por planilla'],
+    ...cuentas.map((c) => [referenciaCuenta(c.id), `Desde la cuenta ${nombreCuenta(c)}`]),
     ...tarjetas.map((t) => [referenciaTarjeta(t.id), `Con la ${nombreTarjeta(t).toLowerCase()}`]),
   ];
   return [
@@ -25,7 +27,7 @@ function campos({ tarjetas, personas }) {
       tipo: 'lista',
       opciones: metodos,
       porDefecto: METODO.DIRECTO,
-      ayuda: 'Es solo la opción sugerida: al marcar cada cuota pueden elegir efectivo o tarjeta y abonar más.',
+      ayuda: 'Es solo la opción sugerida: al marcar cada cuota pueden elegir otra y abonar más.',
     },
     {
       nombre: 'personaId',

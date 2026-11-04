@@ -7,10 +7,12 @@
  *     personas/{id}   salario de cada persona
  *     ingresos/{id}   remesas y otros ingresos
  *     tarjetas/{id}   tarjetas de crédito
+ *     cuentas/{id}    cuentas de banco (ahorro o corriente) con su débito
  *     plazos/{id}     compras a cuotas y préstamos
  *     fijos/{id}      gastos fijos mensuales
  *     meses/{YYYY-MM} { pagados: { clave → detalle } }
  *     gastos/{id}     gastos del día a día, con su campo `mes`
+ *     movimientos/{id} transferencias, pagos de tarjeta, depósitos y retiros, con `mes`
  *
  * Las lecturas son en tiempo real (onSnapshot): cuando una persona guarda
  * algo, a la otra le aparece solo. Las escrituras no se esperan en la
@@ -33,9 +35,21 @@ import {
 } from './firebase.js';
 import { cambiar, leer, COLECCIONES } from '../state/store.js';
 import { planificarPago } from '../domain/presupuesto.js';
-import { idDeTarjeta, referenciaTarjeta } from '../domain/tarjetas.js';
-import { METODO } from '../domain/plazos.js';
-import { crearRespaldo, leerRespaldo, COLECCIONES_PRINCIPALES } from '../domain/respaldo.js';
+import { referenciaTarjeta } from '../domain/tarjetas.js';
+import {
+  cambiosDeSaldo,
+  combinarEfectos,
+  efectoDeMedio,
+  efectosDeMovimiento,
+  referenciaCuenta,
+} from '../domain/cuentas.js';
+import { METODO, MEDIO_EFECTIVO } from '../domain/plazos.js';
+import {
+  crearRespaldo,
+  leerRespaldo,
+  COLECCIONES_POR_MES,
+  COLECCIONES_PRINCIPALES,
+} from '../domain/respaldo.js';
 import { fechaIso, inicioDelDia, mesDe } from '../utils/fechas.js';
 
 /** ruta('tarjetas', 'abc') → "hogares/principal/tarjetas/abc" */
@@ -98,7 +112,10 @@ function observarLector() {
   );
 }
 
-/** Escucha los pagos marcados y los gastos de un mes. Llamarla dos veces no duplica nada. */
+/**
+ * Escucha los pagos marcados, los gastos y los movimientos de un mes.
+ * Llamarla dos veces no duplica nada.
+ */
 export function observarMes(mes) {
   if (mesesObservados.has(mes)) return;
   mesesObservados.add(mes);
@@ -111,13 +128,15 @@ export function observarMes(mes) {
         }),
       errorDeLectura,
     ),
-    onSnapshot(
-      query(refColeccion('gastos'), where('mes', '==', mes)),
-      (foto) =>
-        cambiar((e) => {
-          e.datos.gastos = { ...e.datos.gastos, [mes]: conId(foto) };
-        }),
-      errorDeLectura,
+    ...COLECCIONES_POR_MES.map((nombre) =>
+      onSnapshot(
+        query(refColeccion(nombre), where('mes', '==', mes)),
+        (foto) =>
+          cambiar((e) => {
+            e.datos[nombre] = { ...e.datos[nombre], [mes]: conId(foto) };
+          }),
+        errorDeLectura,
+      ),
     ),
   );
 }
@@ -174,7 +193,27 @@ const sinEsperar = (promesa) => {
 };
 
 /* ------------------------------------------------------------------ */
-/* Registros: personas, ingresos, tarjetas, plazos, fijos             */
+/* Saldos                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Agrega al lote los cambios de saldo de cuentas y tarjetas. Usa
+ * `increment` para que dos personas puedan anotar a la vez sin pisarse.
+ * @param {{cuentas: {id:string, deltaSaldo:number}[], tarjetas: {id:string, deltaSaldo:number}[]}} cambios
+ */
+function escribirSaldos(lote, cambios) {
+  ['cuentas', 'tarjetas'].forEach((coleccion) =>
+    (cambios[coleccion] || []).forEach(({ id, deltaSaldo }) =>
+      lote.update(refDocumento(coleccion, id), { saldo: increment(deltaSaldo) }),
+    ),
+  );
+}
+
+/** Los mismos cambios, a partir de efectos (ver domain/cuentas.js). */
+const escribirEfectos = (lote, efectos) => escribirSaldos(lote, cambiosDeSaldo(efectos, leer().datos));
+
+/* ------------------------------------------------------------------ */
+/* Registros: personas, ingresos, tarjetas, cuentas, plazos, fijos    */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -191,20 +230,32 @@ export function guardarRegistro(coleccion, valores, id) {
   return ref.id;
 }
 
-/** Borra un registro y suelta las referencias que otros tenían hacia él. */
+/**
+ * Borra un registro y suelta las referencias que otros tenían hacia él:
+ * las cuotas que se pagaban con esa tarjeta o cuenta pasan a efectivo, y
+ * los salarios que caían en esa cuenta quedan sin cuenta. Los gastos y
+ * movimientos de meses pasados se quedan como están (son historia).
+ */
 export function eliminarRegistro(coleccion, id) {
-  const { plazos } = leer().datos;
+  const { plazos, fijos, personas, ingresos, cuentas } = leer().datos;
   const lote = writeBatch(db);
   lote.delete(refDocumento(coleccion, id));
+  const actualizar = (nombre, lista, condicion, cambios) =>
+    lista.filter(condicion).forEach((r) => lote.update(refDocumento(nombre, r.id), cambios));
+
   if (coleccion === 'tarjetas') {
-    plazos
-      .filter((p) => p.metodo === referenciaTarjeta(id))
-      .forEach((p) => lote.update(refDocumento('plazos', p.id), { metodo: METODO.DIRECTO }));
+    actualizar('plazos', plazos, (p) => p.metodo === referenciaTarjeta(id), { metodo: METODO.DIRECTO });
+  }
+  if (coleccion === 'cuentas') {
+    const referencia = referenciaCuenta(id);
+    actualizar('plazos', plazos, (p) => p.metodo === referencia, { metodo: METODO.DIRECTO });
+    actualizar('fijos', fijos, (f) => f.medio === referencia, { medio: MEDIO_EFECTIVO });
+    actualizar('personas', personas, (p) => p.cuentaId === id, { cuentaId: deleteField() });
+    actualizar('ingresos', ingresos, (i) => i.cuentaId === id, { cuentaId: deleteField() });
   }
   if (coleccion === 'personas') {
-    plazos
-      .filter((p) => p.personaId === id)
-      .forEach((p) => lote.update(refDocumento('plazos', p.id), { personaId: deleteField() }));
+    actualizar('plazos', plazos, (p) => p.personaId === id, { personaId: deleteField() });
+    actualizar('cuentas', cuentas, (c) => c.personaId === id, { personaId: deleteField() });
   }
   sinEsperar(lote.commit());
 }
@@ -215,7 +266,7 @@ export function eliminarRegistro(coleccion, id) {
 
 /**
  * Marca o desmarca un pago. Todo lo que cambia (el mes, el saldo de la
- * tarjeta, lo abonado a la cuota) se escribe junto en un solo lote.
+ * tarjeta o de la cuenta, lo abonado a la cuota) se escribe junto en un solo lote.
  * Los saldos y abonos usan `increment` para que dos personas puedan
  * marcar cosas al mismo tiempo sin pisarse.
  * @param {string} mes
@@ -234,9 +285,7 @@ export function alternarPago(mes, clave, detalle) {
 
   const lote = writeBatch(db);
   lote.set(refDocumento('meses', mes), { pagados }, { merge: true });
-  plan.tarjetas.forEach(({ id, deltaSaldo }) =>
-    lote.update(refDocumento('tarjetas', id), { saldo: increment(deltaSaldo) }),
-  );
+  escribirSaldos(lote, plan);
   plan.plazos.forEach(({ id, deltaAbonado, deltaPagadas }) => {
     const cambios = {};
     if (deltaAbonado) cambios.abonado = increment(deltaAbonado);
@@ -247,44 +296,38 @@ export function alternarPago(mes, clave, detalle) {
   return plan;
 }
 
+const autorActual = () => {
+  const { usuario } = leer();
+  return usuario ? { uid: usuario.uid, nombre: usuario.nombre } : null;
+};
+
 /**
- * Guarda un gasto. Si se pagó con tarjeta, se suma al saldo de esa tarjeta.
+ * Guarda un gasto. Con tarjeta de crédito se suma a su saldo; con débito
+ * se resta del saldo de la cuenta.
  * @param {{fecha:string, monto:number, categoria:string, medio:string, nota:string}} gasto
  */
 export function agregarGasto(gasto) {
-  const { datos, usuario } = leer();
   const mes = gasto.fecha.slice(0, 7);
   const lote = writeBatch(db);
   lote.set(doc(refColeccion('gastos')), {
     ...gasto,
     mes,
-    autor: usuario ? { uid: usuario.uid, nombre: usuario.nombre } : null,
+    autor: autorActual(),
     creadoEn: serverTimestamp(),
   });
-  const idTarjeta = idDeTarjeta(gasto.medio);
-  if (idTarjeta && datos.tarjetas.some((t) => t.id === idTarjeta)) {
-    lote.update(refDocumento('tarjetas', idTarjeta), { saldo: increment(gasto.monto) });
-  }
+  escribirEfectos(lote, efectoDeMedio(gasto.medio, gasto.monto));
   sinEsperar(lote.commit());
   observarMes(mes);
 }
 
 /**
- * Cambia un gasto (monto, fecha, categoría, tarjeta, nota). Si cambió el
- * monto o la tarjeta, ajusta los saldos: lo quita de la tarjeta anterior y
- * lo suma a la nueva.
+ * Cambia un gasto (monto, fecha, categoría, medio, nota). Si cambió el
+ * monto o el medio, ajusta los saldos: deshace el gasto anterior en su
+ * tarjeta o cuenta y aplica el nuevo.
  * @param {Object} original  El gasto como está guardado (con su id).
  * @param {{fecha:string, monto:number, categoria:string, medio:string, nota:string}} cambios
  */
 export function editarGasto(original, cambios) {
-  const { datos } = leer();
-  const existeTarjeta = (id) => id && datos.tarjetas.some((t) => t.id === id);
-  const deltas = {};
-  const anterior = idDeTarjeta(original.medio);
-  const nueva = idDeTarjeta(cambios.medio);
-  if (existeTarjeta(anterior)) deltas[anterior] = (deltas[anterior] || 0) - Number(original.monto || 0);
-  if (existeTarjeta(nueva)) deltas[nueva] = (deltas[nueva] || 0) + Number(cambios.monto || 0);
-
   const mes = cambios.fecha.slice(0, 7);
   const lote = writeBatch(db);
   lote.update(refDocumento('gastos', original.id), {
@@ -294,18 +337,16 @@ export function editarGasto(original, cambios) {
     ...(original.posibleRepetido ? { posibleRepetido: deleteField() } : {}),
     actualizado: serverTimestamp(),
   });
-  Object.entries(deltas).forEach(([id, delta]) => {
-    if (Math.abs(delta) > 0.0001) {
-      lote.update(refDocumento('tarjetas', id), { saldo: increment(delta) });
-    }
-  });
+  escribirEfectos(
+    lote,
+    combinarEfectos(efectoDeMedio(original.medio, original.monto, -1), efectoDeMedio(cambios.medio, cambios.monto)),
+  );
   sinEsperar(lote.commit());
   observarMes(mes);
 }
 
-/** Borra un gasto y, si fue con tarjeta, lo resta del saldo. */
+/** Borra un gasto y deshace lo que sumó a la tarjeta o restó de la cuenta. */
 export function borrarGasto(gasto) {
-  const { datos } = leer();
   const lote = writeBatch(db);
   if (gasto.origen === 'correo') {
     // Se marca en lugar de borrarlo, para que el lector de correos no lo vuelva a anotar.
@@ -313,10 +354,55 @@ export function borrarGasto(gasto) {
   } else {
     lote.delete(refDocumento('gastos', gasto.id));
   }
-  const idTarjeta = idDeTarjeta(gasto.medio);
-  if (idTarjeta && datos.tarjetas.some((t) => t.id === idTarjeta)) {
-    lote.update(refDocumento('tarjetas', idTarjeta), { saldo: increment(-gasto.monto) });
+  escribirEfectos(lote, efectoDeMedio(gasto.medio, gasto.monto, -1));
+  sinEsperar(lote.commit());
+}
+
+/* ------------------------------------------------------------------ */
+/* Movimientos entre cuentas                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Anota un movimiento (transferencia, pago de tarjeta, depósito o retiro)
+ * o cambia uno que ya existe. Los saldos de las cuentas y tarjetas
+ * involucradas se ajustan en la misma escritura.
+ * @param {{fecha:string, monto:number, desde:string, hacia:string, nota:string}} valores
+ * @param {Object} [original]  El movimiento como está guardado, para editarlo.
+ */
+export function guardarMovimiento(valores, original) {
+  const mes = valores.fecha.slice(0, 7);
+  const lote = writeBatch(db);
+  if (original) {
+    lote.update(refDocumento('movimientos', original.id), {
+      ...valores,
+      mes,
+      ...(original.posibleRepetido ? { posibleRepetido: deleteField() } : {}),
+      actualizado: serverTimestamp(),
+    });
+    escribirEfectos(lote, combinarEfectos(efectosDeMovimiento(original, -1), efectosDeMovimiento(valores)));
+  } else {
+    lote.set(doc(refColeccion('movimientos')), {
+      ...valores,
+      mes,
+      autor: autorActual(),
+      creadoEn: serverTimestamp(),
+    });
+    escribirEfectos(lote, efectosDeMovimiento(valores));
   }
+  sinEsperar(lote.commit());
+  observarMes(mes);
+}
+
+/** Borra un movimiento y deshace sus efectos en los saldos. */
+export function borrarMovimiento(movimiento) {
+  const lote = writeBatch(db);
+  if (movimiento.origen === 'correo') {
+    // Igual que los gastos: se marca para que el lector no lo vuelva a anotar.
+    lote.update(refDocumento('movimientos', movimiento.id), { descartado: true, actualizado: serverTimestamp() });
+  } else {
+    lote.delete(refDocumento('movimientos', movimiento.id));
+  }
+  escribirEfectos(lote, efectosDeMovimiento(movimiento, -1));
   sinEsperar(lote.commit());
 }
 
@@ -348,13 +434,12 @@ async function escribirEnLotes(operaciones, tamano = 400) {
     const lote = writeBatch(db);
     operaciones.slice(i, i + tamano).forEach((operacion) => operacion(lote));
     await registrar(lote.commit()); // un lote a la vez, en orden
-
   }
 }
 
 /** Texto JSON con todos los datos del hogar, de todos los meses. */
 export async function exportarRespaldo() {
-  const nombres = [...COLECCIONES_PRINCIPALES, 'meses', 'gastos'];
+  const nombres = [...COLECCIONES_PRINCIPALES, 'meses', ...COLECCIONES_POR_MES];
   const fotos = await Promise.all(nombres.map((n) => getDocs(refColeccion(n))));
   const todo = {};
   nombres.forEach((nombre, i) => {
@@ -375,7 +460,7 @@ export async function exportarRespaldo() {
  */
 export async function importarRespaldo(objeto) {
   const nombrePersona = leer().usuario?.nombre?.split(' ')[0] || 'Persona 1';
-  const { colecciones, meses, gastos } = leerRespaldo(objeto, { nombrePersona });
+  const { colecciones, meses, gastos, movimientos } = leerRespaldo(objeto, { nombrePersona });
   const operaciones = [];
   Object.entries(colecciones).forEach(([nombre, lista]) => {
     lista.forEach(({ id, ...cuerpo }) =>
@@ -388,13 +473,16 @@ export async function importarRespaldo(objeto) {
   gastos.forEach(({ id, ...cuerpo }) =>
     operaciones.push((lote) => lote.set(refDocumento('gastos', id), cuerpo)),
   );
+  movimientos.forEach(({ id, ...cuerpo }) =>
+    operaciones.push((lote) => lote.set(refDocumento('movimientos', id), cuerpo)),
+  );
   await escribirEnLotes(operaciones);
   return operaciones.length;
 }
 
 /** Borra todos los datos del hogar. */
 export async function borrarTodo() {
-  const nombres = [...COLECCIONES_PRINCIPALES, 'meses', 'gastos'];
+  const nombres = [...COLECCIONES_PRINCIPALES, 'meses', ...COLECCIONES_POR_MES];
   const fotos = await Promise.all(nombres.map((n) => getDocs(refColeccion(n))));
   const operaciones = fotos.flatMap((foto) =>
     foto.docs.map((documento) => (lote) => lote.delete(documento.ref)),

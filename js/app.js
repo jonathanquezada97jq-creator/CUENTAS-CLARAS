@@ -13,7 +13,7 @@ import { inicioDelDia } from './utils/fechas.js';
 
 import { vistaInicio } from './vistas/inicio.js';
 import { vistaPagos, acciones as accionesPagos } from './vistas/pagos.js';
-import { vistaTarjetas } from './vistas/tarjetas.js';
+import { vistaBancos } from './vistas/bancos.js';
 import { vistaCuotas } from './vistas/cuotas.js';
 import { vistaIngresos } from './vistas/ingresos.js';
 import {
@@ -26,6 +26,8 @@ import {
 import { acciones as accionesAjustes } from './vistas/ajustes.js';
 
 import { acciones as accionesTarjeta } from './formularios/tarjeta.js';
+import { acciones as accionesCuenta } from './formularios/cuenta.js';
+import { acciones as accionesMovimiento } from './formularios/movimiento.js';
 import { acciones as accionesPlazo } from './formularios/plazo.js';
 import { acciones as accionesFijo } from './formularios/fijo.js';
 import { acciones as accionesIngreso } from './formularios/ingreso.js';
@@ -37,7 +39,7 @@ import { acciones as accionesPago } from './formularios/pago.js';
 export const VISTAS = Object.freeze({
   inicio: vistaInicio,
   pagos: vistaPagos,
-  tarjetas: vistaTarjetas,
+  bancos: vistaBancos,
   cuotas: vistaCuotas,
   ingresos: vistaIngresos,
 });
@@ -94,9 +96,13 @@ export function dibujar(estado) {
   }
 }
 
+/** Direcciones viejas que llevan a otra pestaña (#tarjetas ahora es parte de Bancos). */
+const DIRECCIONES_VIEJAS = Object.freeze({ tarjetas: 'bancos' });
+
 const vistaDeLaDireccion = () => {
   const nombre = window.location.hash.slice(1);
-  return nombre in VISTAS ? nombre : 'inicio';
+  const vista = DIRECCIONES_VIEJAS[nombre] || nombre;
+  return vista in VISTAS ? vista : 'inicio';
 };
 
 /** Registra acciones y eventos generales. Se llama una vez al arrancar. */
@@ -107,6 +113,8 @@ export function iniciarInterfaz() {
     accionesAjustes,
     accionesPagos,
     accionesTarjeta,
+    accionesCuenta,
+    accionesMovimiento,
     accionesPlazo,
     accionesFijo,
     accionesIngreso,

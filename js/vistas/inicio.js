@@ -15,6 +15,7 @@ import {
   LIMITES_DEUDA,
 } from '../domain/presupuesto.js';
 import { usoDeTarjeta } from '../domain/tarjetas.js';
+import { saldoEnCuentas } from '../domain/cuentas.js';
 import { cuotasPendientes, mesDeLaUltimaCuota } from '../domain/plazos.js';
 import { calcularAguinaldo } from '../domain/salario.js';
 import {
@@ -24,6 +25,7 @@ import {
   enlacePestana,
   filaPago,
   motivoAguinaldo,
+  nombreCuenta,
   textoAguinaldo,
 } from '../ui/componentes.js';
 
@@ -39,7 +41,7 @@ function primerosPasos() {
       <p class="texto-suave">Con sus salarios, tarjetas y lo que sacaron a plazos, la app les dice cuánto les queda cada mes y qué tienen que pagar. Lo que uno anota, el otro lo ve al instante.</p>
     </section>
     ${bloqueVacio('1. Agreguen a cada persona con su salario: calculamos ISSS, AFP y renta.', boton('Agregar persona', 'nueva-persona', { variante: 'principal' }))}
-    ${bloqueVacio('2. Agreguen las tarjetas de crédito y lo que tienen a cuotas o en préstamo.', boton('Agregar tarjeta', 'nueva-tarjeta') + boton('Agregar cuota', 'nuevo-plazo'))}
+    ${bloqueVacio('2. Agreguen sus cuentas de banco, las tarjetas de crédito y lo que tienen a cuotas o en préstamo.', boton('Agregar cuenta', 'nueva-cuenta') + boton('Agregar tarjeta', 'nueva-tarjeta') + boton('Agregar cuota', 'nuevo-plazo'))}
     ${bloqueVacio('3. Anoten los gastos fijos: alquiler, luz, agua, internet.', boton('Agregar gasto fijo', 'nuevo-fijo'))}
     ${bloqueVacio('¿Ya usaban la versión anterior? Copien el respaldo de allá y péguenlo en Ajustes.', boton('Abrir Ajustes', 'abrir-ajustes'))}`;
 }
@@ -98,6 +100,15 @@ function cifras(r, datos) {
           : '<span class="cifra__valor">—</span><p>No hay tarjetas registradas.</p>'
       }
     </div>
+    ${
+      datos.cuentas.length
+        ? `<a class="cifra cifra--enlace" href="#bancos">
+            <span class="etiqueta">En sus cuentas</span>
+            <span class="cifra__valor">${dinero(saldoEnCuentas(datos.cuentas))}</span>
+            <p>${datos.cuentas.length === 1 ? '1 cuenta' : `${datos.cuentas.length} cuentas`} de banco · ver en Bancos</p>
+          </a>`
+        : ''
+    }
   </section>`;
 }
 
@@ -120,11 +131,16 @@ function proximosDepositos(datos, hoy) {
     e.tipo === 'salario'
       ? `${e.persona.frecuencia === 'mensual' ? 'Salario' : 'Quincena'} de ${e.persona.nombre}`
       : e.ingreso.nombre;
+  const cuentaDe = (e) => {
+    const id = e.tipo === 'salario' ? e.persona.cuentaId : e.ingreso.cuentaId;
+    const cuenta = id ? datos.cuentas.find((c) => c.id === id) : null;
+    return cuenta ? ` · a ${nombreCuenta(cuenta)}` : '';
+  };
   return `<section class="seccion">
     <div class="seccion__cabecera"><h2 class="seccion__titulo">Lo que va a entrar</h2></div>
     <ul class="lista">${lista
       .map(
-        (e) => `<li class="lista__fila"><div class="lista__principal"><div class="lista__titulo">${esc(nombre(e))}</div><div class="lista__detalle">${fechaCorta(e.fecha)} · ${cuandoEs(e.fecha, hoy).toLowerCase()}</div></div><span class="monto">${dinero(e.monto)}</span></li>`,
+        (e) => `<li class="lista__fila"><div class="lista__principal"><div class="lista__titulo">${esc(nombre(e))}</div><div class="lista__detalle">${fechaCorta(e.fecha)} · ${cuandoEs(e.fecha, hoy).toLowerCase()}${esc(cuentaDe(e))}</div></div><span class="monto">${dinero(e.monto)}</span></li>`,
       )
       .join('')}</ul>
   </section>`;
@@ -190,7 +206,7 @@ function cuotasPorTerminar(datos, mes) {
 /** @param {Object} estado  Estado completo (ver js/state/store.js). */
 export function vistaInicio(estado, hoy) {
   const { datos } = estado;
-  const vacio = ['personas', 'ingresos', 'tarjetas', 'plazos', 'fijos'].every((c) => !datos[c].length);
+  const vacio = ['personas', 'ingresos', 'tarjetas', 'cuentas', 'plazos', 'fijos'].every((c) => !datos[c].length);
   if (vacio) return primerosPasos();
 
   const mes = mesDe(hoy);

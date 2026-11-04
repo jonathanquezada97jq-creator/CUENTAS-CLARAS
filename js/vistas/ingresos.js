@@ -12,7 +12,7 @@ import {
   ingresosRecurrentesMensuales,
 } from '../domain/presupuesto.js';
 import { TIPOS_INGRESO } from '../constants/catalogos.js';
-import { boletaSalario, boton, bloqueVacio, motivoAguinaldo, textoAguinaldo } from '../ui/componentes.js';
+import { boletaSalario, boton, bloqueVacio, motivoAguinaldo, nombreCuenta, textoAguinaldo } from '../ui/componentes.js';
 
 /** Cuántos ingresos de una sola vez se muestran (los más recientes). */
 const MAXIMO_UNICOS = 12;
@@ -22,11 +22,17 @@ function textoDiasDePago(persona) {
   return dias.length === 2 ? `Le pagan los días ${dias[0]} y ${dias[1]}` : `Le pagan el día ${dias[0]}`;
 }
 
+/** " · a Banco Cuscatlán ••1421" si tiene cuenta elegida. */
+function textoCuenta(registro, datos) {
+  const cuenta = registro.cuentaId ? datos.cuentas.find((c) => c.id === registro.cuentaId) : null;
+  return cuenta ? ` · a ${nombreCuenta(cuenta)}` : '';
+}
+
 function personaHtml(persona, datos, anio) {
   const aguinaldo = calcularAguinaldo(persona, anio);
   return `<article class="persona">
     <div class="persona__cabecera">
-      <div><h3 class="persona__nombre">${esc(persona.nombre)}</h3><div class="lista__detalle">${textoDiasDePago(persona)}</div></div>
+      <div><h3 class="persona__nombre">${esc(persona.nombre)}</h3><div class="lista__detalle">${textoDiasDePago(persona)}${esc(textoCuenta(persona, datos))}</div></div>
       ${boton('Editar', 'editar-persona', { variante: 'chico', datos: { id: persona.id } })}
     </div>
     ${boletaSalario(persona, datos)}
@@ -57,7 +63,7 @@ export function vistaIngresos(estado, hoy) {
 
   const listaRecurrentes = recurrentes.length
     ? `<ul class="lista">${recurrentes
-        .map((i) => filaIngreso(i, `${TIPOS_INGRESO[i.tipo] || 'Ingreso'} · ${i.frecuencia === 'quincenal' ? 'cada quincena' : 'cada mes'} · día ${i.dia}`))
+        .map((i) => filaIngreso(i, `${TIPOS_INGRESO[i.tipo] || 'Ingreso'} · ${i.frecuencia === 'quincenal' ? 'cada quincena' : 'cada mes'} · día ${i.dia}${textoCuenta(i, datos)}`))
         .join('')}</ul>
       <div class="indicadores"><span>Al mes <b>${dinero(ingresosRecurrentesMensuales(datos))}</b></span></div>`
     : '<p class="nota">Remesas, alquileres o cualquier entrada fija que se repite.</p>';
@@ -66,7 +72,7 @@ export function vistaIngresos(estado, hoy) {
     ? `<ul class="lista">${unicos
         .map((i) => {
           const fecha = leerFecha(i.fecha);
-          return filaIngreso(i, `${fecha ? fechaCorta(fecha) : ''} · ${TIPOS_INGRESO[i.tipo] || 'Ingreso'}`);
+          return filaIngreso(i, `${fecha ? fechaCorta(fecha) : ''} · ${TIPOS_INGRESO[i.tipo] || 'Ingreso'}${textoCuenta(i, datos)}`);
         })
         .join('')}</ul>`
     : '<p class="nota">Una venta, un servicio, un trabajo extra. Cuenta solo en el mes de su fecha.</p>';

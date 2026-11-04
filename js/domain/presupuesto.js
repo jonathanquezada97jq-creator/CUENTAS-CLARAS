@@ -7,11 +7,15 @@
  * @property {import('./salario.js').Persona[]} personas
  * @property {Object[]} ingresos  Otros ingresos: cada mes, cada quincena o de una sola vez.
  * @property {import('./tarjetas.js').Tarjeta[]} tarjetas
+ * @property {import('./cuentas.js').Cuenta[]} [cuentas]  Cuentas de banco.
  * @property {import('./plazos.js').Plazo[]} plazos
- * @property {Object[]} fijos  Gastos fijos mensuales.
+ * @property {Object[]} fijos  Gastos fijos mensuales; `medio` dice si se pagan
+ *   en efectivo o desde una cuenta ("cuenta:<id>").
  * @property {Object<string, Object<string, Object>>} pagados
  *   Por mes ("YYYY-MM"): clave de pago → detalle del pago (ver planificarPago).
  * @property {Object<string, Object[]>} gastos  Por mes: gastos anotados.
+ * @property {Object<string, Object[]>} [movimientos]  Por mes: transferencias,
+ *   pagos de tarjeta desde una cuenta, depósitos y retiros (ver cuentas.js).
  */
 import { aNumero, redondear, sumar } from '../utils/formato.js';
 import { fechaDePago, fechaIso, leerFecha, mesDe, mesesEntre, sumarMeses } from '../utils/fechas.js';
@@ -27,6 +31,7 @@ import {
   METODO,
 } from './plazos.js';
 import { idDeTarjeta, montoDeOpcion, opcionesDePago, referenciaTarjeta, TIPO_PAGO_TARJETA } from './tarjetas.js';
+import { idDeCuenta, pagosATarjeta } from './cuentas.js';
 
 /** Arriba de estos porcentajes del ingreso, la deuda se considera de cuidado o alta. */
 export const LIMITES_DEUDA = Object.freeze({ saludable: 0.3, maximo: 0.4 });
@@ -41,7 +46,7 @@ export function leerClavePago(clave) {
   return { tipo: clave.slice(0, separador), id: clave.slice(separador + 1) };
 }
 
-const buscar = (lista, id) => lista.find((x) => x.id === id);
+const buscar = (lista, id) => (lista || []).find((x) => x.id === id);
 const pagadosDelMes = (datos, mes) => datos.pagados?.[mes] ?? {};
 /**
  * Gastos del mes. Los que llegaron del correo y se borraron quedan guardados
@@ -203,9 +208,14 @@ function medioDelPago(detalle) {
  * @property {boolean} pagado
  * @property {number} [numeroCuota]  Plazos: número de la cuota de este mes.
  * @property {boolean} [porPlanilla]  Plazos descontados del salario.
- * @property {string|null} [medio]  Plazos pagados: "efectivo", "planilla" o "tarjeta:<id>".
+ * @property {string|null} [medio]  Plazos pagados: "efectivo", "planilla", "tarjeta:<id>" o "cuenta:<id>".
+ * @property {string|null} [medio]  Fijos pagados: "efectivo" o "cuenta:<id>".
  * @property {number|null} [minimo]  Tarjetas: pago mínimo.
  * @property {string|null} [tipoDePago]  Tarjetas pagadas: 'contado', 'minimo' u 'otro'.
+ * @property {string|null} [desde]  Tarjetas pagadas: "cuenta:<id>" o "efectivo".
+ * @property {boolean} [registrado]  Tarjetas: si el pago se marcó en Pagos
+ *   (si no, se pagó solo con transferencias, que se quitan en Movimientos).
+ * @property {Object[]} [transferencias]  Tarjetas: movimientos que la pagan este mes.
  */
 
 /**
@@ -220,12 +230,15 @@ export function pagosDelMes(datos, mes, hoy) {
   datos.fijos
     .filter((fijo) => estaVigente(fijo, mes))
     .forEach((fijo) => {
+      const clave = clavePago(TIPO_PAGO.FIJO, fijo.id);
+      const registrado = pagados[clave];
       lista.push({
-        clave: clavePago(TIPO_PAGO.FIJO, fijo.id),
+        clave,
         tipo: TIPO_PAGO.FIJO,
         registro: fijo,
-        monto: aNumero(fijo.monto),
+        monto: redondear(aNumero(registrado?.monto ?? fijo.monto)),
         dia: fijo.dia,
+        medio: registrado ? (registrado.medio ?? null) : null,
       });
     });
 
@@ -253,16 +266,24 @@ export function pagosDelMes(datos, mes, hoy) {
     .forEach((tarjeta) => {
       const clave = clavePago(TIPO_PAGO.TARJETA, tarjeta.id);
       const registrado = pagados[clave];
+      // Pagos hechos con una transferencia (anotados como movimiento o leídos del correo).
+      const transferencias = pagosATarjeta(datos, mes, tarjeta.id);
+      const transferido = redondear(sumar(transferencias, (m) => aNumero(m.monto)));
       const { contado, minimo } = opcionesDePago(tarjeta);
-      if (!registrado && contado <= 0) return;
+      if (!registrado && !transferencias.length && contado <= 0) return;
+      const pagado = Boolean(registrado) || transferencias.length > 0;
       lista.push({
         clave,
         tipo: TIPO_PAGO.TARJETA,
         registro: tarjeta,
-        monto: registrado ? redondear(aNumero(registrado.monto)) : contado,
+        monto: pagado ? redondear(aNumero(registrado?.monto) + transferido) : contado,
         dia: tarjeta.pago,
         minimo,
+        pagado,
+        registrado: Boolean(registrado),
         tipoDePago: registrado ? (registrado.tipo ?? null) : null,
+        desde: registrado?.desde ?? transferencias[0]?.desde ?? null,
+        transferencias,
       });
     });
 
@@ -270,7 +291,7 @@ export function pagosDelMes(datos, mes, hoy) {
     .map((pago) => ({
       ...pago,
       fecha: fechaDePago(mes, pago.dia),
-      pagado: Boolean(pagados[pago.clave]),
+      pagado: pago.pagado ?? Boolean(pagados[pago.clave]),
     }))
     .sort((a, b) => a.fecha - b.fecha || a.clave.localeCompare(b.clave));
 }
@@ -287,6 +308,7 @@ export function resumenDelMes(datos, mes, hoy) {
   const pagadoConTarjeta = redondear(
     sumar(pagos.filter((p) => p.pagado && conTarjeta(p.medio)), (p) => p.monto),
   );
+  // "Efectivo" aquí es todo lo que no va a tarjeta de crédito: también el débito.
   const gastosEfectivo = redondear(
     sumar(gastos.filter((g) => !conTarjeta(g.medio)), (g) => aNumero(g.monto)),
   );
@@ -333,8 +355,9 @@ export function nivelDeDeuda(proporcion) {
 /**
  * @typedef {Object} DetalleDePago  Lo que la persona eligió al pagar.
  * @property {number} [monto]  Cuotas: lo pagado (puede ser más que la cuota). Tarjetas: si tipo es 'otro'.
- * @property {string} [medio]  Cuotas: "efectivo" o "tarjeta:<id>".
+ * @property {string} [medio]  Cuotas: "efectivo", "tarjeta:<id>" o "cuenta:<id>".
  * @property {'contado'|'minimo'|'otro'} [tipo]  Tarjetas.
+ * @property {string} [desde]  Tarjetas: "efectivo" o "cuenta:<id>" de donde salió el dinero.
  * @property {string} [fecha]  "YYYY-MM-DD"; por defecto, hoy.
  */
 
@@ -342,6 +365,7 @@ export function nivelDeDeuda(proporcion) {
  * @typedef {Object} PlanDePago
  * @property {Object<string, Object|null>} pagados  Claves a guardar en el mes (null = borrar).
  * @property {{id:string, deltaSaldo:number}[]} tarjetas  Cambios al saldo de tarjetas.
+ * @property {{id:string, deltaSaldo:number}[]} cuentas  Cambios al saldo de cuentas.
  * @property {{id:string, deltaAbonado?:number, deltaPagadas?:number}[]} plazos  Cambios a las cuotas.
  * @property {number} montoPagado  Lo que se pagó (0 al desmarcar).
  * @property {boolean} desmarcado  Si el plan quita un pago que ya estaba marcado.
@@ -353,6 +377,7 @@ function planVacio() {
   return {
     pagados: {},
     tarjetas: [],
+    cuentas: [],
     plazos: [],
     montoPagado: 0,
     desmarcado: false,
@@ -360,11 +385,35 @@ function planVacio() {
   };
 }
 
+/**
+ * Agrega al plan lo que pasa con los saldos al pagar `monto` con `medio`:
+ * con tarjeta sube su saldo; desde una cuenta (débito) baja el de la cuenta.
+ * Solo si la tarjeta o la cuenta todavía existen. Monto negativo = revertir.
+ */
+function aplicarMedio(plan, datos, medio, monto) {
+  if (!monto) return;
+  const idTarjeta = idDeTarjeta(medio);
+  if (idTarjeta && buscar(datos.tarjetas, idTarjeta)) plan.tarjetas.push({ id: idTarjeta, deltaSaldo: monto });
+  const idCuenta = idDeCuenta(medio);
+  if (idCuenta && buscar(datos.cuentas, idCuenta)) plan.cuentas.push({ id: idCuenta, deltaSaldo: -monto });
+}
+
 function planDeFijo(datos, clave, id, existente, fecha) {
-  if (!buscar(datos.fijos, id)) return null;
+  const fijo = buscar(datos.fijos, id);
+  if (!fijo) return null;
   const plan = planVacio();
-  plan.desmarcado = Boolean(existente);
-  plan.pagados[clave] = existente ? null : { fecha };
+  if (existente) {
+    plan.desmarcado = true;
+    plan.pagados[clave] = null;
+    // Los pagos marcados antes de existir las cuentas solo guardaban la fecha.
+    if (existente.monto !== undefined) aplicarMedio(plan, datos, existente.medio, -redondear(aNumero(existente.monto)));
+    return plan;
+  }
+  const monto = redondear(aNumero(fijo.monto));
+  const medio = idDeCuenta(fijo.medio) ? fijo.medio : MEDIO_EFECTIVO;
+  plan.pagados[clave] = { fecha, monto, medio };
+  aplicarMedio(plan, datos, medio, monto);
+  plan.montoPagado = monto;
   return plan;
 }
 
@@ -383,10 +432,7 @@ function planDePlazo(datos, clave, id, existente, fecha, detalle) {
     if (existente.monto !== undefined) {
       const monto = redondear(aNumero(existente.monto));
       plan.plazos.push({ id, deltaAbonado: -monto });
-      const idTarjeta = idDeTarjeta(existente.medio);
-      if (idTarjeta && buscar(datos.tarjetas, idTarjeta)) {
-        plan.tarjetas.push({ id: idTarjeta, deltaSaldo: -monto });
-      }
+      aplicarMedio(plan, datos, existente.medio, -monto);
     } else if (Math.round(aNumero(plazo.pagadas)) > 0) {
       // Pago marcado con la primera versión: contaba cuotas, no dinero.
       plan.plazos.push({ id, deltaPagadas: -1 });
@@ -397,10 +443,9 @@ function planDePlazo(datos, clave, id, existente, fecha, detalle) {
   const monto = redondear(detalle.monto ?? cuotaDelMes(plazo));
   const medio = detalle.medio || (seDescuentaPorPlanilla(plazo) ? METODO.PLANILLA : MEDIO_EFECTIVO);
   plan.pagados[clave] = { fecha, monto, medio };
-  if (monto > 0) plan.plazos.push({ id, deltaAbonado: monto });
-  const idTarjeta = idDeTarjeta(medio);
-  if (idTarjeta && buscar(datos.tarjetas, idTarjeta) && monto > 0) {
-    plan.tarjetas.push({ id: idTarjeta, deltaSaldo: monto });
+  if (monto > 0) {
+    plan.plazos.push({ id, deltaAbonado: monto });
+    aplicarMedio(plan, datos, medio, monto);
   }
   if (estaActivo(plazo) && redondear(saldoPendiente(plazo) - monto) <= 0) {
     plan.plazosTerminados.push(plazo);
@@ -419,6 +464,8 @@ function planDeTarjeta(datos, clave, id, existente, fecha, detalle) {
     plan.pagados[clave] = null;
     const monto = redondear(aNumero(existente.monto));
     if (monto > 0) plan.tarjetas.push({ id, deltaSaldo: monto });
+    // El dinero vuelve a la cuenta de donde salió.
+    if (monto > 0 && idDeCuenta(existente.desde)) aplicarMedio(plan, datos, existente.desde, -monto);
     // La primera versión pagaba cuotas junto con la tarjeta: se revierten también.
     (existente.plazos || [])
       .map((idPlazo) => buscar(datos.plazos, idPlazo))
@@ -432,8 +479,13 @@ function planDeTarjeta(datos, clave, id, existente, fecha, detalle) {
 
   const tipo = detalle.tipo || TIPO_PAGO_TARJETA.CONTADO;
   const monto = montoDeOpcion(tarjeta, tipo, detalle.monto);
-  plan.pagados[clave] = { fecha, monto, tipo };
-  if (monto > 0) plan.tarjetas.push({ id, deltaSaldo: -monto });
+  const desde = idDeCuenta(detalle.desde) ? detalle.desde : MEDIO_EFECTIVO;
+  plan.pagados[clave] = { fecha, monto, tipo, desde };
+  if (monto > 0) {
+    plan.tarjetas.push({ id, deltaSaldo: -monto });
+    // Si se pagó desde una cuenta, el dinero sale de ahí.
+    if (idDeCuenta(desde)) aplicarMedio(plan, datos, desde, monto);
+  }
   plan.montoPagado = monto;
   return plan;
 }
@@ -442,10 +494,12 @@ function planDeTarjeta(datos, clave, id, existente, fecha, detalle) {
  * Calcula qué cambia al marcar o desmarcar un pago, sin escribir nada.
  * El repositorio aplica el plan en una sola escritura.
  *
- * - Gasto fijo: solo se marca.
+ * - Gasto fijo: se marca; si se paga desde una cuenta, baja su saldo.
  * - Cuota: suma lo pagado (`abonado`), que puede ser más que la cuota. Si
- *   se pagó con tarjeta, ese monto pasa al saldo de la tarjeta.
- * - Tarjeta: resta del saldo el contado, el mínimo u otro monto.
+ *   se pagó con tarjeta, ese monto pasa al saldo de la tarjeta; si fue con
+ *   débito, sale del saldo de la cuenta.
+ * - Tarjeta: resta del saldo el contado, el mínimo u otro monto, y si se
+ *   pagó desde una cuenta, lo resta también de la cuenta.
  * - Si ya estaba marcado, se desmarca y se revierte con lo que se guardó.
  *
  * @param {DatosHogar} datos

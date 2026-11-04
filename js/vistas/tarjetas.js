@@ -1,9 +1,13 @@
-/** Pestaña Tarjetas: saldo, fechas, uso del límite y costo de pagar solo el mínimo. */
+/**
+ * Tarjetas de crédito dentro de la pestaña Bancos (ver bancos.js): saldo,
+ * fechas, uso del límite y costo de pagar solo el mínimo.
+ */
 import { escaparHtml as esc, dinero, dineroEntero, porcentaje, redondear, sumar, aNumero } from '../utils/formato.js';
 import { cuandoEs, diferenciaDias, fechaCorta, mesDe, proximaFecha } from '../utils/fechas.js';
 import { cuotasDeTarjeta, opcionesDePago, siPaganElMinimo, usoDeTarjeta } from '../domain/tarjetas.js';
 import { estaActivo, saldoPendiente } from '../domain/plazos.js';
 import { clavePago } from '../domain/presupuesto.js';
+import { pagosATarjeta } from '../domain/cuentas.js';
 import { boton, bloqueVacio, chip } from '../ui/componentes.js';
 import { COLORES_TARJETA, TIPOS_PAGO_TARJETA } from '../constants/catalogos.js';
 
@@ -24,11 +28,14 @@ function consejoDePago(tarjeta, fechaPago) {
 }
 
 function chipDePagoDelMes(tarjeta, datos, hoy) {
-  const registrado = datos.pagados?.[mesDe(hoy)]?.[clavePago('tarjeta', tarjeta.id)];
+  const mes = mesDe(hoy);
+  const registrado = datos.pagados?.[mes]?.[clavePago('tarjeta', tarjeta.id)];
+  const transferido = redondear(sumar(pagosATarjeta(datos, mes, tarjeta.id), (m) => aNumero(m.monto)));
   const fechaPago = proximaFecha(tarjeta.pago, hoy);
-  if (registrado) {
-    const como = TIPOS_PAGO_TARJETA[registrado.tipo] || 'Pagada';
-    return chip(`Este mes: ${como.toLowerCase()} ${dinero(registrado.monto)}`, 'bien');
+  if (registrado || transferido > 0) {
+    let como = 'pagado con transferencia';
+    if (registrado) como = registrado && transferido > 0 ? 'pagado' : (TIPOS_PAGO_TARJETA[registrado.tipo] || 'Pagada').toLowerCase();
+    return chip(`Este mes: ${como} ${dinero(aNumero(registrado?.monto) + transferido)}`, 'bien');
   }
   const urgente = diferenciaDias(hoy, fechaPago) <= 3;
   return chip(`Pago ${cuandoEs(fechaPago, hoy).toLowerCase()}`, urgente ? 'aviso' : '');
@@ -72,21 +79,24 @@ function tarjetaHtml(tarjeta, datos, hoy) {
   </article>`;
 }
 
-export function vistaTarjetas(estado, hoy) {
-  const { datos } = estado;
+/** Sección de tarjetas de crédito de la pestaña Bancos. */
+export function seccionTarjetas(datos, hoy) {
   const { tarjetas, plazos } = datos;
+  const agregar = boton('Agregar', 'nueva-tarjeta', { variante: 'chico', icono: 'mas' });
   if (!tarjetas.length) {
-    return `<section class="seccion"><h1 class="titulo-pagina">Tarjetas de crédito</h1></section>
-      ${bloqueVacio('Agreguen sus tarjetas con los datos del estado de cuenta: límite, saldo, día de corte y fecha de pago.', boton('Agregar tarjeta', 'nueva-tarjeta', { variante: 'principal' }))}`;
+    return `<section class="seccion">
+        <div class="seccion__cabecera"><h2 class="seccion__titulo">Tarjetas de crédito</h2></div>
+        ${bloqueVacio('Agreguen sus tarjetas con los datos del estado de cuenta: límite, saldo, día de corte y fecha de pago.', boton('Agregar tarjeta', 'nueva-tarjeta', { variante: 'principal' }))}
+      </section>`;
   }
   const saldo = redondear(sumar(tarjetas, (t) => aNumero(t.saldo)));
   const usado = redondear(sumar(tarjetas, (t) => usoDeTarjeta(t, plazos).usado));
   const limite = redondear(sumar(tarjetas, (t) => aNumero(t.limite)));
   const ordenadas = [...tarjetas].sort((a, b) => proximaFecha(a.pago, hoy) - proximaFecha(b.pago, hoy));
   return `<section class="seccion">
-      <div class="seccion__cabecera"><h1 class="titulo-pagina">Tarjetas</h1>${boton('Agregar', 'nueva-tarjeta', { variante: 'chico', icono: 'mas' })}</div>
-      <div class="indicadores"><span>Saldo total <b>${dinero(saldo)}</b></span><span>Usado con cuotas <b>${dinero(usado)}</b></span><span>Límite <b>${dineroEntero(limite)}</b></span></div>
-    </section>
-    <section class="tarjetas">${ordenadas.map((t) => tarjetaHtml(t, datos, hoy)).join('')}</section>
-    <p class="nota">El pago se marca en Pagos, y ahí eligen si fue el contado, el mínimo u otro monto. Lo que compran después del día de corte entra al siguiente estado de cuenta.</p>`;
+      <div class="seccion__cabecera"><h2 class="seccion__titulo">Tarjetas de crédito</h2>${agregar}</div>
+      <div class="indicadores"><span>Deben <b>${dinero(saldo)}</b></span><span>Usado con cuotas <b>${dinero(usado)}</b></span><span>Límite <b>${dineroEntero(limite)}</b></span></div>
+      <div class="tarjetas">${ordenadas.map((t) => tarjetaHtml(t, datos, hoy)).join('')}</div>
+      <p class="nota">El pago se marca en Pagos: ahí eligen si fue el contado, el mínimo u otro monto y de qué cuenta salió. Si lo pagan con una transferencia, se anota como movimiento y la tarjeta queda pagada. Lo que compran después del día de corte entra al siguiente estado de cuenta.</p>
+    </section>`;
 }

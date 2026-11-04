@@ -1,11 +1,14 @@
 /**
  * Marcar pagos del mes.
  *
- * - Gasto fijo y cuota por planilla: se marcan con un toque.
+ * - Gasto fijo y cuota por planilla: se marcan con un toque (el fijo sale
+ *   de la cuenta que tenga elegida, si tiene).
  * - Cuota: se abre una ventana con el monto ya puesto (se puede subir para
- *   abonar más) y el medio: efectivo o una tarjeta.
- * - Tarjeta: se abre una ventana para elegir contado, mínimo u otro monto.
- * - Si ya estaba pagado, el toque lo desmarca y revierte el saldo.
+ *   abonar más) y el medio: efectivo, débito de una cuenta o una tarjeta.
+ * - Tarjeta: se abre una ventana para elegir contado, mínimo u otro monto
+ *   y de qué cuenta salió el dinero.
+ * - Si ya estaba pagado, el toque lo desmarca y revierte los saldos. Una
+ *   tarjeta pagada con una transferencia se quita desde Movimientos.
  */
 import { abrirFormulario } from '../ui/formulario.js';
 import { avisar } from '../ui/aviso.js';
@@ -13,8 +16,9 @@ import { leer } from '../state/store.js';
 import { alternarPago } from '../data/repositorio.js';
 import { pagosDelMes, TIPO_PAGO } from '../domain/presupuesto.js';
 import { cuotaDelMes, saldoPendiente, MEDIO_EFECTIVO } from '../domain/plazos.js';
-import { idDeTarjeta, opcionesDePago, referenciaTarjeta, TIPO_PAGO_TARJETA } from '../domain/tarjetas.js';
-import { nombreTarjeta } from '../ui/componentes.js';
+import { opcionesDePago, TIPO_PAGO_TARJETA } from '../domain/tarjetas.js';
+import { claveDeBanco, referenciaCuenta } from '../domain/cuentas.js';
+import { nombreCuenta, nombreTarjeta, opcionesDeMedio } from '../ui/componentes.js';
 import { dinero, redondear } from '../utils/formato.js';
 import { fechaIso, inicioDelDia, leerFecha, mesDe } from '../utils/fechas.js';
 
@@ -43,15 +47,13 @@ const validarFecha = (v) => (leerFecha(v.fecha) ? undefined : 'Elegí la fecha d
 
 /** Ventana para pagar una cuota: monto (se puede abonar más) y medio de pago. */
 export function abrirPagoCuota(mes, pago) {
-  const { tarjetas } = leer().datos;
+  const { datos } = leer();
   const plazo = pago.registro;
   const pendiente = saldoPendiente(plazo);
-  const medios = [
-    [MEDIO_EFECTIVO, 'Efectivo, débito o transferencia'],
-    ...tarjetas.map((t) => [referenciaTarjeta(t.id), nombreTarjeta(t)]),
-  ];
-  const tarjetaHabitual = idDeTarjeta(plazo.metodo);
-  const medioSugerido = tarjetas.some((t) => t.id === tarjetaHabitual) ? plazo.metodo : MEDIO_EFECTIVO;
+  const hayCuentas = datos.cuentas.length > 0;
+  const medios = opcionesDeMedio(datos, { efectivo: hayCuentas ? 'Efectivo' : 'Efectivo, débito o transferencia' });
+  // Se sugiere cómo la pagan normalmente, si esa tarjeta o cuenta todavía existe.
+  const medioSugerido = medios.some(([valor]) => valor === plazo.metodo) ? plazo.metodo : MEDIO_EFECTIVO;
 
   abrirFormulario({
     titulo: `Pagar: ${plazo.descripcion}`,
@@ -71,7 +73,9 @@ export function abrirPagoCuota(mes, pago) {
         tipo: 'lista',
         opciones: medios,
         porDefecto: medioSugerido,
-        ayuda: tarjetas.length ? 'Si pagan con tarjeta, el monto se suma al saldo de esa tarjeta.' : '',
+        ayuda: datos.tarjetas.length || hayCuentas
+          ? 'Con tarjeta se suma a su saldo; con débito se resta de la cuenta.'
+          : '',
       },
       { nombre: 'fecha', etiqueta: 'Fecha', tipo: 'fecha', requerido: true, porDefecto: fechaSugerida(pago) },
     ],
@@ -86,8 +90,20 @@ export function abrirPagoCuota(mes, pago) {
   });
 }
 
-/** Ventana para pagar una tarjeta: contado, mínimo u otro monto. */
+/**
+ * Cuenta que se sugiere para pagar una tarjeta: una del mismo banco (pagar
+ * la tarjeta BAC desde la cuenta BAC) o, si no hay, la primera.
+ */
+function cuentaSugerida(tarjeta, cuentas) {
+  const banco = claveDeBanco(tarjeta.banco);
+  const delMismoBanco = banco ? cuentas.find((c) => claveDeBanco(c.banco) === banco) : null;
+  const cuenta = delMismoBanco || cuentas[0];
+  return cuenta ? referenciaCuenta(cuenta.id) : MEDIO_EFECTIVO;
+}
+
+/** Ventana para pagar una tarjeta: contado, mínimo u otro monto, y desde dónde. */
 export function abrirPagoTarjeta(mes, pago) {
+  const { cuentas } = leer().datos;
   const tarjeta = pago.registro;
   const { contado, minimo } = opcionesDePago(tarjeta);
   const opciones = [[TIPO_PAGO_TARJETA.CONTADO, 'Pago de contado', dinero(contado)]];
@@ -106,6 +122,21 @@ export function abrirPagoTarjeta(mes, pago) {
         requerido: true,
         mostrarSi: ['tipo', TIPO_PAGO_TARJETA.OTRO],
       },
+      ...(cuentas.length
+        ? [
+            {
+              nombre: 'desde',
+              etiqueta: '¿De dónde salió el dinero?',
+              tipo: 'lista',
+              opciones: [
+                ...cuentas.map((c) => [referenciaCuenta(c.id), nombreCuenta(c)]),
+                [MEDIO_EFECTIVO, 'Efectivo u otra cuenta'],
+              ],
+              porDefecto: cuentaSugerida(tarjeta, cuentas),
+              ayuda: 'Se resta del saldo de esa cuenta.',
+            },
+          ]
+        : []),
       { nombre: 'fecha', etiqueta: 'Fecha', tipo: 'fecha', requerido: true, porDefecto: fechaSugerida(pago) },
     ],
     textoGuardar: 'Registrar pago',
@@ -117,7 +148,12 @@ export function abrirPagoTarjeta(mes, pago) {
       return validarFecha(v);
     },
     alGuardar: (v) =>
-      registrarPago(mes, pago.clave, { tipo: v.tipo, monto: redondear(v.monto || 0), fecha: v.fecha }),
+      registrarPago(mes, pago.clave, {
+        tipo: v.tipo,
+        monto: redondear(v.monto || 0),
+        desde: v.desde || MEDIO_EFECTIVO,
+        fecha: v.fecha,
+      }),
   });
 }
 
@@ -127,6 +163,11 @@ export const acciones = {
     const pago = pagosDelMes(leer().datos, mes, inicioDelDia()).find((p) => p.clave === clave);
     if (!pago) return;
     if (pago.pagado) {
+      if (pago.tipo === TIPO_PAGO.TARJETA && !pago.registrado) {
+        // Se pagó con una transferencia: se quita borrando el movimiento, no aquí.
+        avisar('Esta tarjeta se pagó con una transferencia. Para quitarla, bórrenla en Movimientos (abajo, en Pagos).', 5000);
+        return;
+      }
       registrarPago(mes, clave);
       return;
     }

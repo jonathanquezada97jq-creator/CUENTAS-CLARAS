@@ -6,8 +6,10 @@
  *   hogares/{hogar}/lectorCorreo/solicitud         lo que se pidió desde la app
  *     { id, mes, pedidoEn, pedidoPor }
  *   hogares/{hogar}/lectorCorreo/cuenta-<correo>   lo que hizo cada cuenta
- *     { cuenta, ultimaRevision, solicitud, mes, estado, nuevos, yaEstaban,
- *       sinTarjeta, ignorados, correosRevisados, posiblesRepetidos, mensaje }
+ *     { cuenta, ultimaRevision, solicitud, mes, estado, nuevos, movimientos,
+ *       yaEstaban, sinTarjeta, sinCuenta, ignorados, correosRevisados,
+ *       posiblesRepetidos, mensaje }
+ *   (nuevos = gastos nuevos; movimientos = transferencias nuevas)
  */
 
 /** Debe coincidir con AJUSTES.minutosEntreRevisiones del script. */
@@ -65,8 +67,10 @@ export function estadoDelLector(lector, mes, ahora) {
       resultado: terminado
         ? {
             nuevos: Number(c.nuevos) || 0,
+            movimientos: Number(c.movimientos) || 0,
             yaEstaban: Number(c.yaEstaban) || 0,
             sinTarjeta: Number(c.sinTarjeta) || 0,
+            sinCuenta: Number(c.sinCuenta) || 0,
             correosRevisados: Number(c.correosRevisados) || 0,
             posiblesRepetidos: Array.isArray(c.posiblesRepetidos) ? c.posiblesRepetidos : [],
             mensaje: c.mensaje || '',

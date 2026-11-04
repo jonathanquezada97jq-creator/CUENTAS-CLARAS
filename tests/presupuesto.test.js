@@ -116,7 +116,7 @@ test('pagar la tarjeta: contado, mínimo u otro monto', () => {
   const datos = datosDePrueba();
   const contado = planificarPago(datos, MES, 'tarjeta_t1', HOY, { tipo: 'contado' });
   assert.deepEqual(contado.tarjetas, [{ id: 't1', deltaSaldo: -185.4 }]);
-  assert.deepEqual(contado.pagados.tarjeta_t1, { fecha: '2026-10-19', monto: 185.4, tipo: 'contado' });
+  assert.deepEqual(contado.pagados.tarjeta_t1, { fecha: '2026-10-19', monto: 185.4, tipo: 'contado', desde: 'efectivo' });
   const minimo = planificarPago(datos, MES, 'tarjeta_t1', HOY, { tipo: 'minimo' });
   assert.deepEqual(minimo.tarjetas, [{ id: 't1', deltaSaldo: -25 }]);
   const otro = planificarPago(datos, MES, 'tarjeta_t1', HOY, { tipo: 'otro', monto: 100 });

@@ -13,7 +13,7 @@
  * Si cambiás la forma de guardar en caché, subí el número de VERSION para
  * que se borre la caché anterior.
  */
-const VERSION = 'cuentas-claras-v2';
+const VERSION = 'cuentas-claras-v3';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

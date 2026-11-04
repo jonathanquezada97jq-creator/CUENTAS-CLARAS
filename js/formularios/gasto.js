@@ -8,13 +8,13 @@ import { leer } from '../state/store.js';
 import { agregarGasto, borrarGasto, editarGasto } from '../data/repositorio.js';
 import { CATEGORIAS_GASTO } from '../constants/catalogos.js';
 import { gastosDelMes } from '../domain/presupuesto.js';
-import { referenciaTarjeta } from '../domain/tarjetas.js';
-import { nombreTarjeta } from '../ui/componentes.js';
+import { opcionesDeMedio } from '../ui/componentes.js';
 import { avisar } from '../ui/aviso.js';
 import { dinero, redondear } from '../utils/formato.js';
 import { fechaIso, leerFecha, mesDe } from '../utils/fechas.js';
 
-function campos(tarjetas, fechaSugerida) {
+function campos(datos, fechaSugerida) {
+  const hayCuentas = datos.cuentas.length > 0;
   return [
     { nombre: 'monto', etiqueta: 'Monto', tipo: 'dinero', requerido: true, medio: true },
     { nombre: 'fecha', etiqueta: 'Fecha', tipo: 'fecha', requerido: true, medio: true, porDefecto: fechaSugerida },
@@ -23,9 +23,11 @@ function campos(tarjetas, fechaSugerida) {
       nombre: 'medio',
       etiqueta: 'Pagado con',
       tipo: 'lista',
-      opciones: [['efectivo', 'Efectivo o débito'], ...tarjetas.map((t) => [referenciaTarjeta(t.id), nombreTarjeta(t)])],
+      opciones: opcionesDeMedio(datos, { efectivo: hayCuentas ? 'Efectivo' : 'Efectivo o débito' }),
       porDefecto: 'efectivo',
-      ayuda: 'Lo que va a tarjeta se suma a su saldo.',
+      ayuda: hayCuentas
+        ? 'Con tarjeta de crédito se suma a su saldo; con débito se resta de la cuenta.'
+        : 'Lo que va a tarjeta se suma a su saldo.',
     },
     { nombre: 'nota', etiqueta: 'Nota', ejemplo: 'Súper, gasolina, pupusas…' },
   ];
@@ -50,7 +52,7 @@ export function abrirFormularioGasto(mes, idGasto) {
   const parecido = gasto?.posibleRepetido
     ? gastosDelMes(datos, mes).find((g) => g.id === gasto.posibleRepetido)
     : null;
-  let intro = delCorreo ? 'Este gasto llegó solo del correo del banco. Revisen la categoría y la tarjeta.' : '';
+  let intro = delCorreo ? 'Este gasto llegó solo del correo del banco. Revisen la categoría y con qué se pagó.' : '';
   if (parecido) {
     intro = `Parece la misma compra que "${parecido.nota || parecido.categoria}" (${dinero(parecido.monto)}), anotada a mano. Si es la misma, eliminen una de las dos; si no, guarden y se quita la marca.`;
   }
@@ -58,7 +60,7 @@ export function abrirFormularioGasto(mes, idGasto) {
   abrirFormulario({
     titulo: gasto ? 'Editar gasto' : 'Agregar gasto',
     intro,
-    campos: campos(datos.tarjetas, fechaSugerida),
+    campos: campos(datos, fechaSugerida),
     valores: gasto || {},
     textoGuardar: gasto ? 'Guardar' : 'Agregar',
     validar,

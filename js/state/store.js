@@ -10,17 +10,19 @@
 import { mesDe } from '../utils/fechas.js';
 
 /** Colecciones que se cargan completas al entrar. */
-export const COLECCIONES = Object.freeze(['personas', 'ingresos', 'tarjetas', 'plazos', 'fijos']);
+export const COLECCIONES = Object.freeze(['personas', 'ingresos', 'tarjetas', 'cuentas', 'plazos', 'fijos']);
 
 function datosVacios() {
   return {
     personas: [],
     ingresos: [],
     tarjetas: [],
+    cuentas: [],
     plazos: [],
     fijos: [],
     pagados: {}, // mes → { clave de pago → detalle }
     gastos: {}, // mes → [gastos]
+    movimientos: {}, // mes → [movimientos entre cuentas]
   };
 }
 
@@ -31,7 +33,7 @@ const estado = {
   usuario: null,
   /** 'al-dia' | 'guardando' | 'sin-conexion' | 'error' */
   guardado: 'al-dia',
-  /** Pestaña visible: 'inicio' | 'pagos' | 'tarjetas' | 'cuotas' | 'ingresos'. */
+  /** Pestaña visible: 'inicio' | 'pagos' | 'bancos' | 'cuotas' | 'ingresos'. */
   vista: 'inicio',
   /** Mes que se ve en la pestaña Pagos. */
   mesVista: mesDe(new Date()),

@@ -13,6 +13,7 @@ import {
   METODO,
 } from '../domain/plazos.js';
 import { idDeTarjeta } from '../domain/tarjetas.js';
+import { idDeCuenta } from '../domain/cuentas.js';
 import { clavePago } from '../domain/presupuesto.js';
 import { TIPOS_PLAZO } from '../constants/catalogos.js';
 import { boton, bloqueVacio, chip } from '../ui/componentes.js';
@@ -29,6 +30,11 @@ function comoSePaga(plazo, datos) {
   if (idTarjeta) {
     const tarjeta = datos.tarjetas.find((t) => t.id === idTarjeta);
     return tarjeta ? `Normalmente con ${tarjeta.banco}` : 'Normalmente con tarjeta';
+  }
+  const idCuenta = idDeCuenta(plazo.metodo);
+  if (idCuenta) {
+    const cuenta = datos.cuentas.find((c) => c.id === idCuenta);
+    return cuenta ? `Normalmente desde la cuenta ${cuenta.banco}` : 'Normalmente desde una cuenta';
   }
   return 'Normalmente en efectivo';
 }

@@ -69,14 +69,16 @@ Todo vive bajo `hogares/{HOGAR_ID}` (`HOGAR_ID` está en `js/config.js`).
 
 | Colección | Documento | Campos principales |
 | --- | --- | --- |
-| `personas` | id automático | `nombre`, `salarioBruto`, `tipo` (`asalariado` · `servicios` · `sin`), `frecuencia` (`quincenal` · `mensual`), `diaQuincena1`, `diaQuincena2` (si es quincenal), `diaPago` (si es mensual), `fechaIngreso`, `deduccion1600`, `netoReal` |
-| `ingresos` | id automático | `nombre`, `tipo`, `monto`, `frecuencia` (`unica` · `mensual` · `quincenal`), `fecha` (si es `unica`), `dia` (si se repite) |
+| `personas` | id automático | `nombre`, `salarioBruto`, `tipo` (`asalariado` · `servicios` · `sin`), `frecuencia` (`quincenal` · `mensual`), `diaQuincena1`, `diaQuincena2` (si es quincenal), `diaPago` (si es mensual), `fechaIngreso`, `deduccion1600`, `netoReal`, `cuentaId` (cuenta donde le depositan) |
+| `ingresos` | id automático | `nombre`, `tipo`, `monto`, `frecuencia` (`unica` · `mensual` · `quincenal`), `fecha` (si es `unica`), `dia` (si se repite), `cuentaId` |
 | `tarjetas` | id automático | `banco`, `nombre`, `ultimos`, `titular`, `limite`, `saldo`, `pagoMinimo`, `tasa`, `corte`, `pago`, `color` |
-| `plazos` | id automático | `descripcion`, `acreedor`, `tipo`, `metodo` (cómo se paga normalmente: `efectivo` · `planilla` · `tarjeta:<id>`), `personaId`, `cuota`, `total`, `pagadas` (cuotas pagadas antes de anotarla), `abonado` (dinero pagado desde la app), `dia`, `tasa` |
-| `fijos` | id automático | `nombre`, `categoria`, `monto`, `dia` |
+| `cuentas` | id automático | `banco`, `tipo` (`ahorro` · `corriente`), `nombre` (apodo), `ultimos` (de la cuenta), `debito` (últimos 4 de su tarjeta de débito), `saldo`, `personaId`, `color` |
+| `plazos` | id automático | `descripcion`, `acreedor`, `tipo`, `metodo` (cómo se paga normalmente: `efectivo` · `planilla` · `tarjeta:<id>` · `cuenta:<id>`), `personaId`, `cuota`, `total`, `pagadas` (cuotas pagadas antes de anotarla), `abonado` (dinero pagado desde la app), `dia`, `tasa` |
+| `fijos` | id automático | `nombre`, `categoria`, `monto`, `dia`, `medio` (`efectivo` · `cuenta:<id>`) |
 | `meses` | `YYYY-MM` | `pagados`: mapa de clave de pago → detalle |
-| `gastos` | id automático, o `correo-<id>` si vino del correo | `fecha`, `mes`, `monto`, `categoria`, `medio` (`efectivo` · `tarjeta:<id>`), `nota`, `autor`, `origen` (`correo` si lo anotó el lector de avisos), `posibleRepetido` (id de un gasto anotado a mano que parece el mismo), `descartado` (gasto del correo que se borró en la app) |
-| `lectorCorreo` | `solicitud` y `cuenta-<correo>` | Pedido de revisar un mes desde la app (`id`, `mes`, `pedidoEn`, `pedidoPor`) y estado de cada lector (`cuenta`, `ultimaRevision`, `solicitud`, `estado`, `nuevos`, `yaEstaban`, `sinTarjeta`, `posiblesRepetidos`, `mensaje`). Ver `domain/lector.js`. |
+| `gastos` | id automático, o `correo-<id>` si vino del correo | `fecha`, `mes`, `monto`, `categoria`, `medio` (`efectivo` · `tarjeta:<id>` · `cuenta:<id>` si fue con débito), `nota`, `autor`, `origen` (`correo` si lo anotó el lector de avisos), `posibleRepetido` (id de un gasto anotado a mano que parece el mismo), `descartado` (gasto del correo que se borró en la app) |
+| `movimientos` | id automático, o `ref-<referencia del banco>` si vino del correo | `fecha`, `mes`, `monto`, `desde` (`cuenta:<id>` · `efectivo` · `externo`), `hacia` (`cuenta:<id>` · `tarjeta:<id>` · `efectivo` · `externo`), `nota`, `autor`, `origen`, `referencia`, `posibleRepetido` (id de otro movimiento, o `pago:tarjeta_<id>` si se parece a un pago marcado a mano), `descartado` |
+| `lectorCorreo` | `solicitud` y `cuenta-<correo>` | Pedido de revisar un mes desde la app (`id`, `mes`, `pedidoEn`, `pedidoPor`) y estado de cada lector (`cuenta`, `ultimaRevision`, `solicitud`, `estado`, `nuevos`, `movimientos`, `yaEstaban`, `sinTarjeta`, `sinCuenta`, `posiblesRepetidos`, `mensaje`). Ver `domain/lector.js`. |
 
 Además, todos los registros guardan `creado` (mes en que se crearon, para no aparecer en meses anteriores) y `actualizado` (hora del servidor).
 
@@ -86,11 +88,29 @@ Además, todos los registros guardan `creado` (mes en que se crearon, para no ap
 
 | Pago | Detalle guardado |
 | --- | --- |
-| Gasto fijo | `fecha` |
-| Cuota | `fecha`, `monto` (lo pagado, puede ser más que la cuota), `medio` (`efectivo` · `planilla` · `tarjeta:<id>`) |
-| Tarjeta | `fecha`, `monto`, `tipo` (`contado` · `minimo` · `otro`) |
+| Gasto fijo | `fecha`, `monto`, `medio` (`efectivo` · `cuenta:<id>`) |
+| Cuota | `fecha`, `monto` (lo pagado, puede ser más que la cuota), `medio` (`efectivo` · `planilla` · `tarjeta:<id>` · `cuenta:<id>`) |
+| Tarjeta | `fecha`, `monto`, `tipo` (`contado` · `minimo` · `otro`), `desde` (`efectivo` · `cuenta:<id>`) |
 
-Los pagos marcados con la primera versión (cuotas pagadas "junto con la tarjeta", con `via`, `cuotas` y `plazos`) se siguen leyendo y se pueden desmarcar.
+Los pagos marcados con versiones anteriores (fijos con solo `fecha`; cuotas pagadas "junto con la tarjeta", con `via`, `cuotas` y `plazos`) se siguen leyendo y se pueden desmarcar.
+
+## Cuentas, débito y movimientos
+
+Cada forma de pagar deja su huella en un saldo (`domain/cuentas.js`):
+
+| Se pagó con | Qué cambia |
+| --- | --- |
+| `efectivo` | ningún saldo |
+| `tarjeta:<id>` | sube el `saldo` (deuda) de la tarjeta |
+| `cuenta:<id>` (débito o desde la cuenta) | baja el `saldo` de la cuenta |
+
+Un **movimiento** mueve dinero de `desde` a `hacia`: la cuenta de donde sale baja, la cuenta a donde llega sube y la tarjeta a donde llega debe menos. Su tipo (`transferencia`, `pago-tarjeta`, `deposito`, `retiro`) no se guarda: sale de `desde` y `hacia` con `tipoDeMovimiento()`.
+
+Las funciones `efectoDeMedio()` y `efectosDeMovimiento()` calculan esas huellas; `combinarEfectos()` las suma (para editar: deshacer lo anterior y aplicar lo nuevo) y `cambiosDeSaldo()` deja solo las cuentas y tarjetas que existen. El repositorio las escribe con `increment` en el mismo lote que el registro (`escribirEfectos()`).
+
+Una tarjeta cuenta como pagada en el mes si tiene su pago marcado en Pagos **o** si algún movimiento del mes va hacia ella (por ejemplo, un Transfer365 leído del correo). En ese segundo caso, tocar el círculo no la desmarca: se quita borrando el movimiento.
+
+Los movimientos no cambian lo que "les queda del mes": los ingresos salen de Ingresos y los pagos de Pagos. Solo mueven saldos entre cuentas.
 
 ## Ejemplo: qué pasa al pagar una cuota con tarjeta
 
@@ -130,7 +150,9 @@ En el resumen del mes, lo pagado con tarjeta no se resta de lo disponible: queda
 - Entrar, salir y entrar con una cuenta sin permiso.
 - Pagar una cuota con tarjeta abonando más que la cuota, y desmarcarla (el saldo de la tarjeta sube y vuelve).
 - Pagar una tarjeta con el mínimo y con otro monto.
-- Agregar y borrar un gasto con tarjeta (el saldo sube y baja).
+- Agregar y borrar un gasto con tarjeta (el saldo sube y baja) y con débito (la cuenta baja y sube).
+- Pagar una tarjeta desde una cuenta y desmarcarlo (bajan y vuelven la tarjeta y la cuenta).
+- Anotar una transferencia, editar su monto y borrarla.
 - Agregar un ingreso de una sola vez y ver que solo cuenta en su mes.
 - Instalar la app en el teléfono y abrirla en modo claro y oscuro.
 
@@ -140,9 +162,11 @@ En el resumen del mes, lo pagado con tarjeta no se resta de lo disponible: queda
 
 Guarda los gastos con la misma forma que `agregarGasto()` del repositorio, más `origen: 'correo'`, con id `correo-<id del correo>` y `autor.nombre = 'Correo del banco'`. Si cambia la forma de un gasto en la app, hay que cambiarla también en `guardarGasto_()` del script.
 
+Las transferencias (Transfer365 y parecidas) se guardan como `movimientos` con la forma de `guardarMovimiento()` del repositorio, con id `ref-<número de referencia>`: el aviso de los dos bancos de una misma transferencia trae la misma referencia, así que se anota una sola vez. `leerMovimiento()` lee el correo, `resolverMovimiento()` busca las cuentas y tarjetas por sus últimos 4 dígitos (o por el banco, si hay una sola cuenta en ese banco) y `guardarMovimiento_()` escribe el movimiento y los saldos juntos. Si cambia la forma de un movimiento en la app, hay que cambiarla también ahí.
+
 Las funciones que leen el texto del correo son puras y se prueban en Node (`tests/avisos-banco.test.js` carga el archivo con `node:vm`).
 
-La app y el script se comunican solo por Firestore: el botón **Buscar gastos del mes en los correos** (`vistas/pagos.js`) escribe `lectorCorreo/solicitud`; cada script lo atiende en su siguiente revisión y deja su resultado en `lectorCorreo/cuenta-<correo>`, que la app escucha (`observarLector()` en el repositorio) y resume con `estadoDelLector()` de `domain/lector.js`. Los gastos del correo que se borran en la app quedan `descartado` en lugar de borrarse, para que el script no los vuelva a crear; `gastosDelMes()` los oculta.
+La app y el script se comunican solo por Firestore: el botón **Buscar lo del mes en los correos** (`vistas/pagos.js`) escribe `lectorCorreo/solicitud`; cada script lo atiende en su siguiente revisión y deja su resultado en `lectorCorreo/cuenta-<correo>`, que la app escucha (`observarLector()` en el repositorio) y resume con `estadoDelLector()` de `domain/lector.js`. Los gastos y movimientos del correo que se borran en la app quedan `descartado` en lugar de borrarse, para que el script no los vuelva a crear; `gastosDelMes()` y `movimientosDelMes()` los ocultan.
 
 ## Mejoras posibles
 

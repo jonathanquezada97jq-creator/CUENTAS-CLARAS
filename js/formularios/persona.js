@@ -7,11 +7,11 @@ import { leer } from '../state/store.js';
 import { guardarRegistro, eliminarRegistro } from '../data/repositorio.js';
 import { TIPOS_SALARIO } from '../constants/catalogos.js';
 import { SALARIO_MINIMO_COMERCIO } from '../constants/ley-sv.js';
-import { boletaSalario } from '../ui/componentes.js';
+import { boletaSalario, nombreCuenta } from '../ui/componentes.js';
 import { dinero } from '../utils/formato.js';
 import { esDiaDelMes } from '../utils/fechas.js';
 
-const CAMPOS = [
+const CAMPOS_SALARIO = [
   { nombre: 'nombre', etiqueta: 'Nombre', requerido: true, ejemplo: 'Ana' },
   {
     nombre: 'salarioBruto',
@@ -67,6 +67,20 @@ const CAMPOS = [
   },
 ];
 
+/** Los campos del salario y, si hay cuentas, la cuenta donde le depositan. */
+function campos(cuentas) {
+  if (!cuentas.length) return CAMPOS_SALARIO;
+  const cuenta = {
+    nombre: 'cuentaId',
+    etiqueta: 'Cuenta donde le depositan',
+    tipo: 'lista',
+    opciones: [['', 'Ninguna (en efectivo o cheque)'], ...cuentas.map((c) => [c.id, nombreCuenta(c)])],
+    porDefecto: '',
+  };
+  const despuesDe = CAMPOS_SALARIO.findIndex((c) => c.nombre === 'netoReal');
+  return [...CAMPOS_SALARIO.slice(0, despuesDe), cuenta, ...CAMPOS_SALARIO.slice(despuesDe)];
+}
+
 function validar(v) {
   if (!(v.salarioBruto > 0) && !(v.netoReal > 0)) {
     return 'Escribí el salario bruto o lo que le depositan.';
@@ -89,7 +103,7 @@ export function abrirFormularioPersona(id) {
   abrirFormulario({
     titulo: persona ? `Salario de ${persona.nombre}` : 'Agregar a alguien del hogar',
     intro: persona ? '' : 'Cada persona con su salario. Calculamos ISSS, AFP y renta.',
-    campos: CAMPOS,
+    campos: campos(datos.cuentas),
     valores: persona || {},
     validar,
     vistaPrevia: (valores) => boletaSalario({ ...persona, ...valores, id: persona?.id }, datos),
