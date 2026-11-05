@@ -486,11 +486,11 @@ test('si mando dinero a otra persona de BAC, no se adivina que llegó a mi cuent
 });
 
 test('avisos que parecen transferencias pero no se pueden leer: se reportan, no se pierden', () => {
-  assert.equal(pareceTransferenciaSinLeer('Su transferencia por $45.00 fue aplicada con éxito.'), true);
+  assert.equal(pareceTransferenciaSinLeer('Su transferencia por $45.00 fue aplicada con éxito.', REMITENTE_BAC), true);
   assert.equal(leerMovimiento('Su transferencia por $45.00 fue aplicada con éxito.', REMITENTE_BAC), null);
-  assert.equal(pareceTransferenciaSinLeer('Compra aprobada por USD 2.00 en PUMA. Hacé tus transferencias en línea.'), false);
-  assert.equal(pareceTransferenciaSinLeer('Su transferencia fue rechazada. Monto: $45.00'), false);
-  assert.equal(pareceTransferenciaSinLeer('Conocé las nuevas funciones de tu banca en línea'), false);
+  assert.equal(pareceTransferenciaSinLeer('Compra aprobada por USD 2.00 en PUMA. Hacé tus transferencias en línea.', REMITENTE_BAC), false);
+  assert.equal(pareceTransferenciaSinLeer('Su transferencia fue rechazada. Monto: $45.00', REMITENTE_BAC), false);
+  assert.equal(pareceTransferenciaSinLeer('Conocé las nuevas funciones de tu banca en línea', REMITENTE_BAC), false);
 });
 
 /* ---------- Sin duplicados ---------- */
@@ -611,15 +611,15 @@ test('fecha del aviso: si no tiene sentido, se prueba al revés o se usa la del 
 });
 
 test('la publicidad del banco no queda como aviso sin leer', () => {
-  assert.equal(pareceTransferenciaSinLeer('Aprovechá: transferencias sin costo y ganá hasta $50 en el sorteo'), false);
-  assert.equal(pareceTransferenciaSinLeer('Notificación de transferencia. Monto: $45.00'), true);
+  assert.equal(pareceTransferenciaSinLeer('Aprovechá: transferencias sin costo y ganá hasta $50 en el sorteo', REMITENTE_BAC), false);
+  assert.equal(pareceTransferenciaSinLeer('Notificación de transferencia. Monto: $45.00', REMITENTE_BAC), true);
 });
 
 test('una transferencia que no se entiende no se anota como compra', () => {
   // Trae dígitos y monto, pero no dice de qué cuenta a cuál: queda sin leer.
   const texto = 'Transferencia procesada. Comprobante 4455. Monto: $80.00. Gracias por usar la tarjeta ****1234.';
   assert.equal(leerMovimiento(texto, REMITENTE_BAC), null);
-  assert.equal(pareceTransferenciaSinLeer(texto), true);
+  assert.equal(pareceTransferenciaSinLeer(texto, REMITENTE_BAC), true);
 });
 
 test('"Has enviado $20.00 desde tu cuenta… a la cuenta…"', () => {
@@ -628,4 +628,142 @@ test('"Has enviado $20.00 desde tu cuenta… a la cuenta…"', () => {
   assert.equal(m.desde.ultimos, '1421');
   assert.equal(m.hacia.ultimos, '5555');
   assert.equal(m.hacia.banco, 'agricola');
+});
+
+/* ---------- Casos reales del 4 de noviembre ---------- */
+
+/** Alerta PRF de BAC: tabla de dos columnas, sin ":" y el monto sin "$". */
+const BAC_ALERTA_PRF = `Alerta PRF BAC Credomatic
+[image: Alertas]
+Estimado/a: JONATHAN STANLEY QUEZADA ABREGO
+
+Se acaba de realizar una compra con tu tarjeta *VISA* terminada en *4400*
+
+Detalles del movimiento:
+Comercio
+Monto
+WOMPI*ESTACION PUMA DI
+3.00
+Fecha y hora
+2026/11/04-06:29:56
+Tipo de la compra
+Estado
+Tarjeta Presente
+Aprobada
+`;
+
+/** El aviso de Cuscatlán de que una transferencia está "en proceso" (después llega el resultado). */
+const CUSCATLAN_EN_PROCESO = `Transferencias interbancarias Transfer365
+ Transferencias 
+
+Transfer365
+
+Hola, Jonathan Stanley
+Le informamos que el resultado de la transferencia está: *en proceso.*
+
+Le notificaremos por correo electrónico el resultado de la misma. También 
+puede consultarlo a través de Banca Digital. 
+
+Compartimos el detalle a continuación:
+Transferencia en proceso
+Cuenta origen 
+Jonathan Quezada 
+***********1421 
+Cuenta de Ahorro - Banco Cuscatlan 
+Cuenta destino 
+Jonathan Quezada 
+************4200 
+BANCO ATLANTIDA 
+Monto 
+*$0.55* 
+Tipo 
+*Pago de tarjeta de Crédito* 
+Concepto 
+Fecha y hora 
+02/11/2026 12:35:46 
+Si usted no ha realizado esta transacción, por favor contáctese 
+inmediatamente al *2212-2000* 
+
+Atentamente,
+Banco CUSCATLAN`;
+
+test('Alerta PRF de BAC: compra de $3.00 en Puma con la tarjeta ••4400', () => {
+  const aviso = copia(leerAviso(BAC_ALERTA_PRF));
+  assert.deepEqual(aviso, { tipo: 'cargo', monto: 3, ultimos: '4400', comercio: 'WOMPI*ESTACION PUMA DI' });
+  assert.equal(adivinarCategoria(aviso.comercio), 'Transporte y gasolina');
+  assert.equal(leerMovimiento(BAC_ALERTA_PRF, 'notificacionesbac@baccredomatic.com'), null, 'no es una transferencia');
+});
+
+test('una compra rechazada en el mismo formato no se anota', () => {
+  assert.equal(leerAviso(BAC_ALERTA_PRF.replace('Aprobada', 'Rechazada')).tipo, 'ignorar');
+});
+
+test('el aviso "en proceso" de Cuscatlán se ignora (se anota con el aviso del resultado)', () => {
+  const m = copia(leerMovimiento(CUSCATLAN_EN_PROCESO, REMITENTE_CUSCATLAN));
+  assert.equal(m.tipo, 'ignorar');
+  assert.match(m.motivo, /en proceso/);
+  assert.equal(pareceTransferenciaSinLeer(CUSCATLAN_EN_PROCESO, REMITENTE_CUSCATLAN), false);
+});
+
+test('el mismo formato de tabla, cuando la transferencia ya se hizo, se lee completo', () => {
+  const hecha = CUSCATLAN_EN_PROCESO.replace(/Le informamos[\s\S]*?Banca Digital\. \n/, 'Le informamos que su transferencia fue exitosa.\n').replace('Transferencia en proceso', 'Transferencia exitosa');
+  const m = copia(leerMovimiento(hecha, REMITENTE_CUSCATLAN));
+  assert.equal(m.tipo, 'movimiento');
+  assert.equal(m.monto, 0.55);
+  assert.equal(m.fecha, '2026-11-02');
+  assert.deepEqual(m.desde, { banco: 'cuscatlan', ultimos: '1421', esTarjeta: false, persona: '' });
+  assert.equal(m.hacia.ultimos, '4200');
+  assert.equal(m.hacia.banco, 'atlantida');
+  assert.equal(m.hacia.esTarjeta, true, '"Tipo: Pago de tarjeta de Crédito"');
+  const r = copia(resolverMovimiento(leerMovimiento(hecha, REMITENTE_CUSCATLAN), CUENTAS, TARJETAS));
+  assert.equal(r.desde, 'cuenta:cusca');
+  assert.equal(r.hacia, 'tarjeta:atl');
+});
+
+test('las negritas (*así*) no estorban, y los números ocultos se conservan', () => {
+  const texto = 'Le informamos que ha recibido un abono a su *CUENTA DE AHORRO X1421* en concepto de Transfer365.\nBanco origen: *BAC*\nProducto Origen: *X8320*\nMonto: *USD0.55*\nCuenta: ***********1421';
+  const m = copia(leerMovimiento(texto, REMITENTE_CUSCATLAN));
+  assert.equal(m.hacia.ultimos, '1421');
+  assert.equal(m.desde.ultimos, '8320');
+  assert.equal(m.desde.banco, 'bac');
+  assert.equal(m.monto, 0.55);
+});
+
+test('un correo de Uber que dice "traslado" no es un aviso del banco sin leer', () => {
+  const uber = 'Un traslado diario rápido, en camino con Moto\nLos miembros obtienen un ahorro promedio de $11 al mes.';
+  assert.equal(pareceTransferenciaSinLeer(uber, 'Uber <uber@uber.com>'), false);
+  assert.equal(leerMovimiento(uber, 'Uber <uber@uber.com>'), null);
+});
+
+test('fechas escritas año/mes/día (2026/11/04-06:29:56)', () => {
+  const texto = 'Transferencia exitosa\nCuenta origen: ****1421\nCuenta destino: ****8320\nMonto: $5.00\nFecha y hora: 2026/11/04-06:29:56';
+  assert.equal(leerMovimiento(texto, REMITENTE_CUSCATLAN).fecha, '2026-11-04');
+});
+
+test('Alerta PRF con cada fila de la tabla en una sola línea', () => {
+  const enFilas = `Alerta PRF BAC Credomatic
+Se acaba de realizar una compra con tu tarjeta VISA terminada en 4400
+Detalles del movimiento:
+Comercio\tMonto
+WOMPI*ESTACION PUMA DI\t3.00
+Fecha y hora
+2026/11/04-06:29:56
+Tipo de la compra    Estado
+Tarjeta Presente    Aprobada`;
+  assert.deepEqual(copia(leerAviso(enFilas)), { tipo: 'cargo', monto: 3, ultimos: '4400', comercio: 'WOMPI*ESTACION PUMA DI' });
+  const conUnEspacio = enFilas.replace('Comercio\tMonto', 'Comercio Monto').replace('WOMPI*ESTACION PUMA DI\t3.00', 'WOMPI*ESTACION PUMA DI 3.00');
+  assert.deepEqual(copia(leerAviso(conUnEspacio)), { tipo: 'cargo', monto: 3, ultimos: '4400', comercio: 'WOMPI*ESTACION PUMA DI' });
+});
+
+test('la compra con la tarjeta de débito ••4400 se resta de su cuenta de BAC', () => {
+  const cuentas = [
+    ...CUENTAS,
+    { id: 'bac2', banco: 'Banco de América Central', ultimos: '8294', debito: '4400', nombre: 'Banco de América Central ••8294' },
+  ];
+  const destino = copia(destinoDelCargo(leerAviso(BAC_ALERTA_PRF), TARJETAS, cuentas));
+  assert.equal(destino.medio, 'cuenta:bac2');
+  assert.equal(destino.delta, -3);
+  // También si la registraron con 4400 como número de la cuenta.
+  const comoCuenta = [{ id: 'bac3', banco: 'BAC', ultimos: '4400', debito: '', nombre: 'BAC ••4400' }];
+  assert.equal(destinoDelCargo(leerAviso(BAC_ALERTA_PRF), {}, comoCuenta).medio, 'cuenta:bac3');
 });

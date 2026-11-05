@@ -34,7 +34,7 @@ function campos(personas) {
       ejemplo: '7788',
       maximo: 4,
       medio: true,
-      ayuda: 'De la tarjeta de débito.',
+      ayuda: 'De la tarjeta (VISA o Mastercard) de esta cuenta, como sale en los avisos de compra: "tarjeta terminada en 4400".',
     },
     {
       nombre: 'saldo',

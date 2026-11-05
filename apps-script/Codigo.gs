@@ -48,7 +48,7 @@
  */
 
 /** Cambia con cada versión del script: al cambiar, se vuelve a revisar el mes. */
-const VERSION_LECTOR = '2026-11-04b';
+const VERSION_LECTOR = '2026-11-04c';
 
 /* ------------------------------------------------------------------ */
 /* Ajustes: lo único que podría hacer falta cambiar                    */
@@ -261,7 +261,14 @@ function buscarComercio_(texto) {
 
 /** Texto del correo sin espacios raros ni retornos de carro. */
 function limpiarTexto_(texto) {
-  return String(texto || '').replace(/\u00a0/g, ' ').replace(/\r/g, '');
+  return (
+    String(texto || '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/\r/g, '')
+      // Las negritas pasan a texto como *así*: se quitan los asteriscos, sin tocar
+      // los números ocultos como ***********1421.
+      .replace(/(^|[\s(:¿¡])\*(?=[^\s*])([^*\n]*?[^\s*])\*(?=$|[\s.,;:)!?])/gm, '$1$2')
+  );
 }
 
 /**
@@ -273,11 +280,16 @@ function limpiarTexto_(texto) {
 function leerAviso(texto) {
   const t = limpiarTexto_(texto);
   const ultimos = buscarUltimos_(t);
-  const monto = buscarMonto_(t);
+  // Primero los datos de la tabla del aviso ("Comercio | Monto" arriba y los
+  // valores abajo, como en las Alertas PRF de BAC, aunque el monto venga sin "$").
+  const campos = camposDelCorreo_(t);
+  const montoDeTabla = montoDe_(buscarCampo_(campos, /^(monto|monto total|importe|valor|total)$/));
+  const monto = montoDeTabla || buscarMonto_(t);
   if (!ultimos || !monto) return null;
   const negativo = NO_ES_CARGO.exec(t);
   if (negativo) return { tipo: 'ignorar', motivo: negativo[0] };
-  return { tipo: 'cargo', monto, ultimos, comercio: buscarComercio_(t) || 'Compra con tarjeta' };
+  const comercioDeTabla = limpiarComercio_(buscarCampo_(campos, /^(comercio|establecimiento|nombre del comercio)$/));
+  return { tipo: 'cargo', monto, ultimos, comercio: comercioDeTabla || buscarComercio_(t) || 'Compra con tarjeta' };
 }
 
 /** Categorías de la app (js/constants/catalogos.js) según palabras del comercio. */
@@ -353,7 +365,6 @@ const ES_TRANSFERENCIA = new RegExp(
     '\\btransferiste\\b',
     '\\btransferid[oa]\\b',
     '\\btransfiri[oó]\\b',
-    '\\btraslado\\b',
     'pago\\s+a\\s+terceros',
     '(?:su|tu)\\s+transferencia',
     '(?:una|la)\\s+transferencia',
@@ -383,7 +394,13 @@ const ES_PAGO_DE_TARJETA = /pago\s+(?:a|de)\s+(?:su\s+|tu\s+|la\s+)?tarjeta/i;
 
 /** Avisos de compra: estos nunca son transferencias. */
 const ES_AVISO_DE_COMPRA =
-  /(^|\n)[\s•·*-]*(comercio|establecimiento)\s*:|\bcompra\s+(aprobada|autorizada|realizada|exitosa|por)\b|\bconsumo\s+(aprobado|autorizado|realizado|por|con)\b/i;
+  /(^|\n)[\s•·*-]*(comercio|establecimiento)\s*:|\bcompra\s+(aprobada|autorizada|realizada|exitosa|por|con\s+tu|con\s+su)\b|realiz(?:ar|ó|o)\s+una\s+compra|\bconsumo\s+(aprobado|autorizado|realizado|por|con)\b/i;
+
+/**
+ * Avisos de que una transferencia está "en proceso": el banco manda otro
+ * aviso con el resultado, y ese es el que se anota.
+ */
+const TRANSFERENCIA_EN_PROCESO = /en\s+proceso|le\s+notificaremos[^.\n]{0,40}resultado|est[aá]\s+pendiente\s+de/i;
 
 /** Correos de publicidad del banco (no son avisos de algo que pasó). */
 const ES_PUBLICIDAD = /promoci[oó]n|beneficio|descuento|aprovech|sorteo|cashback|millas|conoc[eé]\s|descubr[ií]|desc[aá]rg|suscr[ií]b|bolet[ií]n|newsletter/i;
@@ -436,34 +453,146 @@ function nombreDeBanco_(clave) {
 }
 
 /**
- * Pares "Etiqueta: valor" del correo, en orden. Acepta el valor en la misma
- * línea o en la siguiente (así quedan las tablas al pasar a texto) y recuerda
- * si están bajo "Información Origen" o "Información Destino".
+ * Etiquetas que los bancos ponen sin ":" (en tablas): el valor va en la
+ * línea de abajo. Ya sin tildes ni puntuación.
+ */
+const ETIQUETAS_CONOCIDAS = new Set(
+  [
+    'comercio', 'establecimiento', 'nombre del comercio', 'monto', 'monto total', 'importe', 'valor', 'total',
+    'fecha', 'hora', 'fecha y hora', 'fecha de la transaccion', 'fecha de operacion', 'tipo', 'tipo de la compra',
+    'tipo de compra', 'tipo de transaccion', 'tipo de operacion', 'estado', 'cuenta origen', 'cuenta de origen',
+    'cuenta destino', 'cuenta de destino', 'producto origen', 'producto destino', 'banco origen', 'banco destino',
+    'concepto', 'descripcion', 'referencia', 'no referencia', 'numero de referencia', 'comprobante', 'beneficiario',
+    'originado por', 'cliente', 'tarjeta', 'moneda', 'autorizacion', 'numero de autorizacion', 'cuenta debito',
+    'cuenta credito', 'cuenta de debito', 'cuenta de credito', 'ciudad', 'pais',
+  ],
+);
+
+const normalizarEtiqueta_ = (texto) => normalizar_(texto).replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+
+/** Qué tiene que parecer el valor de algunas etiquetas (para reconocer tablas de dos columnas). */
+function valorPlausible_(etiqueta, valor) {
+  if (/^(monto|monto total|importe|valor|total)$/.test(etiqueta)) return /^[^a-z]*\d[\d.,]*[^a-z]*(usd)?$/i.test(valor);
+  if (/^(fecha|fecha y hora|fecha de)/.test(etiqueta)) return /\d{1,4}[/-]\d{1,2}[/-]\d{1,4}/.test(valor);
+  if (/^(cuenta|producto)/.test(etiqueta)) return /\d{3}/.test(valor);
+  return true;
+}
+
+/**
+ * Una fila de encabezados en una sola línea ("Comercio    Monto",
+ * "Tipo de la compra Estado"): las etiquetas conocidas que la forman, o null.
+ */
+function etiquetasEnLinea_(linea) {
+  const palabras = normalizarEtiqueta_(linea).split(' ').filter(Boolean);
+  const etiquetas = [];
+  let i = 0;
+  while (i < palabras.length) {
+    let encontrada = null;
+    for (let largo = Math.min(4, palabras.length - i); largo >= 1 && !encontrada; largo -= 1) {
+      const candidata = palabras.slice(i, i + largo).join(' ');
+      if (ETIQUETAS_CONOCIDAS.has(candidata)) encontrada = { candidata, largo };
+    }
+    if (!encontrada) return null;
+    etiquetas.push(encontrada.candidata);
+    i += encontrada.largo;
+  }
+  return etiquetas.length >= 2 ? etiquetas : null;
+}
+
+/** Los valores de una fila en una sola línea, separados por tabulación o varios espacios. */
+function valoresEnLinea_(linea, etiquetas) {
+  const partes = linea.split(/\t+|\s{2,}|\s+\|\s+/).map((x) => x.trim()).filter(Boolean);
+  if (partes.length === etiquetas.length && etiquetas.every((e, n) => valorPlausible_(e, partes[n]))) return partes;
+  // "WOMPI*ESTACION PUMA DI 3.00": el monto es el número del final.
+  const ultima = etiquetas[etiquetas.length - 1];
+  const m = /^(.*\S)\s+((?:US\$|USD|\$)?\s?\d[\d.,]*)$/.exec(linea.trim());
+  if (etiquetas.length === 2 && m && valorPlausible_(ultima, m[2]) && /^(monto|monto total|importe|valor|total)$/.test(ultima)) {
+    return [m[1], m[2]];
+  }
+  return null;
+}
+
+/**
+ * Pares etiqueta → valor del correo, en orden. Entiende:
+ *   - "Etiqueta: valor" en la misma línea;
+ *   - "Etiqueta:" o una etiqueta conocida sola, con el valor en las líneas de
+ *     abajo (así quedan las tablas al pasar a texto);
+ *   - tablas de dos columnas: "Comercio", "Monto" y abajo sus dos valores.
+ * Recuerda si están bajo "Información Origen" o "Información Destino".
  * @returns {{seccion:string, etiqueta:string, valor:string}[]}
  */
 function camposDelCorreo_(texto) {
   const lineas = limpiarTexto_(texto)
     .split('\n')
-    .map((l) => l.replace(/^[\s•·*\-–]+/, '').trim())
+    .map((l) => l.replace(/^[\s•·\-–]+/, '').replace(/^\*\s+/, '').trim())
     .filter(Boolean);
-  const pareceEtiqueta = (linea) => /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][^:]{0,40}:/.test(linea);
+  const enLinea = (linea) => /^([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ .º°]{0,40}?)\s*:\s*(.*)$/.exec(linea);
+  const encabezado = (linea) => /^(?:informaci[oó]n|datos)\s+(?:de\s+|del\s+)?(origen|destino)\s*:?$/i.exec(linea);
+  // Una etiqueta sin valor en la misma línea: conocida (con o sin ":") o cualquier "Algo:".
+  const etiquetaSola = (linea) => {
+    const m = enLinea(linea);
+    if (m && m[2]) return null;
+    const etiqueta = normalizarEtiqueta_(m ? m[1] : linea);
+    if (ETIQUETAS_CONOCIDAS.has(etiqueta)) return { etiqueta, conocida: true };
+    return m ? { etiqueta, conocida: false } : null;
+  };
+  const cortaValores = (linea) =>
+    encabezado(linea) || etiquetaSola(linea) || (enLinea(linea) && enLinea(linea)[2]) || etiquetasEnLinea_(linea);
+
   const campos = [];
   let seccion = '';
-  for (let i = 0; i < lineas.length; i += 1) {
+  let i = 0;
+  while (i < lineas.length) {
     const linea = lineas[i];
-    const encabezado = /^(?:informaci[oó]n|datos)\s+(?:de\s+|del\s+)?(origen|destino)\s*:?$/i.exec(linea);
-    if (encabezado) {
-      seccion = normalizar_(encabezado[1]);
+    const titulo = encabezado(linea);
+    if (titulo) {
+      seccion = normalizar_(titulo[1]);
+      i += 1;
       continue;
     }
-    const m = /^([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ .º°]{0,40}?)\s*:\s*(.*)$/.exec(linea);
-    if (!m) continue;
-    let valor = m[2].trim();
-    if (!valor && i + 1 < lineas.length && !pareceEtiqueta(lineas[i + 1])) {
-      valor = lineas[i + 1];
+    const m = enLinea(linea);
+    if (m && m[2]) {
+      campos.push({ seccion, etiqueta: normalizarEtiqueta_(m[1]), valor: m[2].trim() });
       i += 1;
+      continue;
     }
-    campos.push({ seccion, etiqueta: normalizar_(m[1]).replace(/[^a-z0-9 ]/g, ''), valor });
+    // Encabezados y valores de una tabla, cada fila en una sola línea.
+    const cabecera = etiquetasEnLinea_(linea);
+    const valoresDeFila = cabecera && i + 1 < lineas.length ? valoresEnLinea_(lineas[i + 1], cabecera) : null;
+    if (valoresDeFila) {
+      cabecera.forEach((etiqueta, n) => campos.push({ seccion, etiqueta, valor: valoresDeFila[n] }));
+      i += 2;
+      continue;
+    }
+    const sola = etiquetaSola(linea);
+    if (!sola) {
+      i += 1;
+      continue;
+    }
+    // Un grupo de etiquetas conocidas seguidas (columnas de una tabla).
+    const grupo = [sola.etiqueta];
+    let j = i + 1;
+    while (sola.conocida && j < lineas.length && etiquetaSola(lineas[j])?.conocida) {
+      grupo.push(etiquetaSola(lineas[j]).etiqueta);
+      j += 1;
+    }
+    // Los valores: las líneas que siguen hasta la próxima etiqueta (como mucho 4).
+    const valores = [];
+    let k = j;
+    while (k < lineas.length && !cortaValores(lineas[k])) {
+      valores.push(lineas[k]);
+      k += 1;
+    }
+    const enColumnas =
+      grupo.length > 1 && valores.length >= grupo.length && grupo.every((e, n) => valorPlausible_(e, valores[n]));
+    if (enColumnas) {
+      grupo.forEach((etiqueta, n) => campos.push({ seccion, etiqueta, valor: valores[n] }));
+      i = j + grupo.length;
+      continue;
+    }
+    grupo.slice(0, -1).forEach((etiqueta) => campos.push({ seccion, etiqueta, valor: '' }));
+    campos.push({ seccion, etiqueta: grupo[grupo.length - 1], valor: valores.slice(0, 4).join(' ') });
+    i = k;
   }
   return campos;
 }
@@ -502,8 +631,8 @@ function montoEnTexto_(texto) {
 /** "02/11/2026 12:35:20 A.M." (día/mes/año) o "2026-11-02T12:35:35-06:00" → "2026-11-02". */
 function fechaDe_(valor) {
   const texto = String(valor || '');
-  const iso = /(\d{4})-(\d{2})-(\d{2})/.exec(texto);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const iso = /(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(texto);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
   const local = /(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(texto);
   if (local) return `${local[3]}-${local[2].padStart(2, '0')}-${local[1].padStart(2, '0')}`;
   return null;
@@ -582,17 +711,22 @@ function leerMovimiento(texto, remitente) {
   if (!monto) return null;
   const fallida = TRANSFERENCIA_FALLIDA.exec(t);
   if (fallida) return { tipo: 'ignorar', motivo: fallida[0] };
+  if (TRANSFERENCIA_EN_PROCESO.test(t)) return { tipo: 'ignorar', motivo: 'en proceso: se anota cuando llegue el aviso con el resultado' };
 
   const entrada = ES_ENTRADA.test(t);
   const banco = bancoDelCorreo_(remitente, t);
 
   // 1. Los datos en forma de lista.
-  let ultimosOrigen = ultimosDe_(valor(ETIQUETA_ORIGEN) || valor(/^(cuenta|producto|numero de cuenta)$/, 'origen'));
+  const productoOrigen = valor(ETIQUETA_ORIGEN) || valor(/^(cuenta|producto|numero de cuenta)$/, 'origen');
+  let ultimosOrigen = ultimosDe_(productoOrigen);
   const productoDestino = valor(ETIQUETA_DESTINO) || valor(/^(cuenta|producto|numero de cuenta)$/, 'destino');
   let ultimosDestino = ultimosDe_(productoDestino);
-  let bancoOrigenLeido = normalizarBanco(valor(/^banco( de)? (origen|emisor|ordenante|que envia)$/));
-  let bancoDestinoLeido = normalizarBanco(valor(/^banco( de)? (destino|receptor|beneficiario|que recibe)$/));
-  const tipoTransaccion = valor(/^tipo( de)? (transaccion|operacion|producto|cuenta)$/);
+  // El banco puede venir en su propia etiqueta o junto a la cuenta ("***1421 Cuenta de Ahorro - Banco Cuscatlan").
+  let bancoOrigenLeido =
+    normalizarBanco(valor(/^banco( de)? (origen|emisor|ordenante|que envia)$/)) || normalizarBanco(productoOrigen);
+  let bancoDestinoLeido =
+    normalizarBanco(valor(/^banco( de)? (destino|receptor|beneficiario|que recibe)$/)) || normalizarBanco(productoDestino);
+  const tipoTransaccion = valor(/^tipo( de)? (transaccion|operacion|producto|cuenta)$|^tipo$/);
   let destinoEsTarjeta = /tarjeta|credito/i.test(normalizar_(`${productoDestino} ${tipoTransaccion}`));
 
   // 2. Lo que falte, de las oraciones: "abono a su CUENTA DE AHORRO X1421",
@@ -655,10 +789,12 @@ function leerMovimiento(texto, remitente) {
  * transferencia) pero que leerMovimiento no pudo leer. Esos no se anotan
  * como compra: quedan para revisar y aparecen en la app.
  */
-function pareceTransferenciaSinLeer(texto) {
+function pareceTransferenciaSinLeer(texto, remitente) {
   const t = limpiarTexto_(texto);
   return (
+    Boolean(bancoDelCorreo_(remitente, '')) &&
     ES_TRANSFERENCIA.test(t) &&
+    !TRANSFERENCIA_EN_PROCESO.test(t) &&
     !ES_AVISO_DE_COMPRA.test(t) &&
     !TRANSFERENCIA_FALLIDA.test(t) &&
     !ES_PUBLICIDAD.test(t) &&
@@ -1029,7 +1165,7 @@ function revisarMensaje_(mensaje, contexto) {
   let resultado;
   if (movimiento) {
     resultado = revisarMovimiento_(mensaje, movimiento, contexto);
-  } else if (pareceTransferenciaSinLeer(texto)) {
+  } else if (pareceTransferenciaSinLeer(texto, mensaje.getFrom())) {
     // Antes que leerAviso: una transferencia que no se entendió no se anota como compra.
     resultado = avisoSinLeer_(mensaje, texto, contexto);
   } else {
@@ -1238,6 +1374,9 @@ function revisarMovimiento_(mensaje, movimiento, contexto) {
   if (!resuelto) {
     const texto = `${fecha} · ${monto} · de ${describirExtremo_(movimiento.desde)} a ${describirExtremo_(movimiento.hacia)}`;
     Logger.log(`${texto}: ninguna de las dos cuentas está en la app, no se anota.`);
+    if (contexto.mostrarTextoSinLeer) {
+      Logger.log(`----- Texto del aviso -----\n${limpiarTexto_(mensaje.getPlainBody()).replace(/\n{3,}/g, '\n\n').slice(0, 2500)}\n----- Fin del aviso -----`);
+    }
     contexto.ultimoPendiente = `${texto} · ninguna cuenta está en la app`;
     if (limpieza.length && contexto.guardar) confirmar_(limpieza, 'quitar la compra falsa');
     resumen.sinCuenta += 1;

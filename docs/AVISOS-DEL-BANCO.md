@@ -17,7 +17,7 @@ El archivo [`apps-script/Codigo.gs`](../apps-script/Codigo.gs) (el "lector") lee
 
 ### Compras con tarjeta
 
-- **Monto, comercio y fecha** salen del correo.
+- **Monto, comercio y fecha** salen del correo, también de las tablas sin ":" como las *Alertas PRF* de BAC ("Comercio | Monto" y abajo "WOMPI*ESTACION PUMA DI | 3.00"), aunque el monto venga sin "$".
 - **Tarjeta:** se busca en la app por los últimos 4 dígitos:
   - si es una **tarjeta de crédito** registrada, el gasto se suma a su saldo;
   - si es la **tarjeta de débito** de una cuenta (el campo "Últimos 4 del débito" de la cuenta), el gasto se resta del saldo de la cuenta;
@@ -59,10 +59,11 @@ Se anotan como **movimiento** en Pagos → Movimientos entre cuentas, y los sald
 - **Compras falsas de la versión anterior:** la versión anterior del lector podía anotar un aviso de transferencia como si fuera una compra. Al leer ese aviso otra vez, esa compra se quita sola y se devuelve su saldo.
 - **La tarjeta queda pagada:** en Pagos, la tarjeta que se pagó con una transferencia sale como pagada. Para quitar ese pago, borren el movimiento.
 - **No se anotan** transferencias rechazadas o que no se hicieron, ni los avisos de "recibimos su pago" que manda el banco de la tarjeta (el pago ya llega por el aviso de la cuenta de donde salió).
+- **"En proceso":** el aviso de Cuscatlán de que una transferencia está en proceso no se anota; se anota la del aviso con el resultado ("TRANSACCIÓN EXITOSA"), así no queda doble.
 
 ### Avisos que no se pudieron anotar
 
-Si un aviso parece una transferencia pero el lector no entiende su formato, o si ninguna de sus cuentas está en la app, **no se pierde**:
+Si un aviso **de un banco** parece una transferencia pero el lector no entiende su formato, o si ninguna de sus cuentas está en la app, **no se pierde**:
 
 - En la app, **Pagos → Avisos del banco** los lista ("Sin leer" o "ninguna cuenta está en la app").
 - En Gmail quedan con la etiqueta *Cuentas Claras/Revisar*.
