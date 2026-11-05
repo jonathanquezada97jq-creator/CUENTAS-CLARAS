@@ -74,11 +74,11 @@ Todo vive bajo `hogares/{HOGAR_ID}` (`HOGAR_ID` está en `js/config.js`).
 | `tarjetas` | id automático | `banco`, `nombre`, `ultimos`, `titular`, `limite`, `saldo`, `pagoMinimo`, `tasa`, `corte`, `pago`, `color` |
 | `cuentas` | id automático | `banco`, `tipo` (`ahorro` · `corriente`), `nombre` (apodo), `ultimos` (de la cuenta), `debito` (últimos 4 de su tarjeta de débito), `saldo`, `personaId`, `color` |
 | `plazos` | id automático | `descripcion`, `acreedor`, `tipo`, `metodo` (cómo se paga normalmente: `efectivo` · `planilla` · `tarjeta:<id>` · `cuenta:<id>`), `personaId`, `cuota`, `total`, `pagadas` (cuotas pagadas antes de anotarla), `abonado` (dinero pagado desde la app), `dia`, `tasa` |
-| `fijos` | id automático | `nombre`, `categoria`, `monto`, `dia`, `medio` (`efectivo` · `cuenta:<id>`) |
+| `fijos` | id automático | `nombre`, `categoria`, `monto`, `dia`, `medio` (`efectivo` · `cuenta:<id>` · `tarjeta:<id>` si es un cargo automático), `comercio` (cómo aparece en el aviso del banco, para que el lector reconozca el cobro) |
 | `meses` | `YYYY-MM` | `pagados`: mapa de clave de pago → detalle |
-| `gastos` | id automático, o `correo-<id>` si vino del correo | `fecha`, `mes`, `monto`, `categoria`, `medio` (`efectivo` · `tarjeta:<id>` · `cuenta:<id>` si fue con débito), `nota`, `autor`, `origen` (`correo` si lo anotó el lector de avisos), `posibleRepetido` (id de un gasto anotado a mano que parece el mismo), `descartado` (gasto del correo que se borró en la app) |
-| `movimientos` | id automático, o `ref-<referencia del banco>` si vino del correo | `fecha`, `mes`, `monto`, `desde` (`cuenta:<id>` · `efectivo` · `externo`), `hacia` (`cuenta:<id>` · `tarjeta:<id>` · `efectivo` · `externo`), `nota`, `autor`, `origen`, `referencia`, `posibleRepetido` (id de otro movimiento, o `pago:tarjeta_<id>` si se parece a un pago marcado a mano), `descartado` |
-| `lectorCorreo` | `solicitud` y `cuenta-<correo>` | Pedido de revisar un mes desde la app (`id`, `mes`, `pedidoEn`, `pedidoPor`) y estado de cada lector (`cuenta`, `ultimaRevision`, `solicitud`, `estado`, `nuevos`, `movimientos`, `yaEstaban`, `sinTarjeta`, `sinCuenta`, `posiblesRepetidos`, `mensaje`). Ver `domain/lector.js`. |
+| `gastos` | id automático, o `correo-<id>` si vino del correo | `fecha`, `mes`, `monto`, `categoria`, `medio` (`efectivo` · `tarjeta:<id>` · `cuenta:<id>` si fue con débito), `nota`, `autor`, `origen` (`correo` si lo anotó el lector de avisos), `correoId` (gasto anotado a mano que el lector enlazó con su aviso), `posibleRepetido` (id de un gasto anotado a mano que parece el mismo, o `pago:fijo_<id>`), `descartado` (gasto del correo que se borró en la app, o aviso que se usó para otra cosa), `enlazadoA` (`pago:fijo_<id>` si el aviso marcó un gasto fijo) |
+| `movimientos` | id automático, o `ref-<referencia del banco>` si vino del correo | `fecha`, `mes`, `monto`, `desde` (`cuenta:<id>` · `efectivo` · `externo`), `hacia` (`cuenta:<id>` · `tarjeta:<id>` · `efectivo` · `externo`), `nota`, `autor`, `origen`, `referencia`, `referencias` (avisos del banco enlazados con este movimiento), `lados` (`sale` · `entra`: qué banco ya avisó), `posibleRepetido` (id de otro movimiento), `descartado`, `enlazadoA` (`pago:tarjeta_<id>` o `pago:fijo_<id>` si el aviso se usó para un pago marcado) |
+| `lectorCorreo` | `solicitud` y `cuenta-<correo>` | Pedido de revisar un mes desde la app (`id`, `mes`, `pedidoEn`, `pedidoPor`) y estado de cada lector (`cuenta`, `ultimaRevision`, `solicitud`, `estado`, `nuevos`, `movimientos`, `fijos`, `enlazados`, `yaEstaban`, `sinTarjeta`, `sinCuenta`, `sinLeer`, `posiblesRepetidos`, `mensaje`, y siempre `avisosPendientes`). Ver `domain/lector.js`. |
 
 Además, todos los registros guardan `creado` (mes en que se crearon, para no aparecer en meses anteriores) y `actualizado` (hora del servidor).
 
@@ -88,9 +88,9 @@ Además, todos los registros guardan `creado` (mes en que se crearon, para no ap
 
 | Pago | Detalle guardado |
 | --- | --- |
-| Gasto fijo | `fecha`, `monto`, `medio` (`efectivo` · `cuenta:<id>`) |
+| Gasto fijo | `fecha`, `monto`, `medio` (`efectivo` · `cuenta:<id>` · `tarjeta:<id>`), `origen` (`correo` si lo marcó el lector al ver el cobro) |
 | Cuota | `fecha`, `monto` (lo pagado, puede ser más que la cuota), `medio` (`efectivo` · `planilla` · `tarjeta:<id>` · `cuenta:<id>`) |
-| Tarjeta | `fecha`, `monto`, `tipo` (`contado` · `minimo` · `otro`), `desde` (`efectivo` · `cuenta:<id>`) |
+| Tarjeta | `fecha`, `monto`, `tipo` (`contado` · `minimo` · `otro`), `desde` (`efectivo` · `cuenta:<id>`), `correo` (aviso del banco enlazado con este pago) |
 
 Los pagos marcados con versiones anteriores (fijos con solo `fecha`; cuotas pagadas "junto con la tarjeta", con `via`, `cuotas` y `plazos`) se siguen leyendo y se pueden desmarcar.
 
@@ -166,7 +166,7 @@ Las transferencias (Transfer365 y parecidas) se guardan como `movimientos` con l
 
 Las funciones que leen el texto del correo son puras y se prueban en Node (`tests/avisos-banco.test.js` carga el archivo con `node:vm`).
 
-La app y el script se comunican solo por Firestore: el botón **Buscar lo del mes en los correos** (`vistas/pagos.js`) escribe `lectorCorreo/solicitud`; cada script lo atiende en su siguiente revisión y deja su resultado en `lectorCorreo/cuenta-<correo>`, que la app escucha (`observarLector()` en el repositorio) y resume con `estadoDelLector()` de `domain/lector.js`. Los gastos y movimientos del correo que se borran en la app quedan `descartado` en lugar de borrarse, para que el script no los vuelva a crear; `gastosDelMes()` y `movimientosDelMes()` los ocultan.
+La app y el script se comunican solo por Firestore: el botón **Buscar lo del mes en los correos** (`vistas/pagos.js`) escribe `lectorCorreo/solicitud`; cada script lo atiende en su siguiente revisión y deja su resultado en `lectorCorreo/cuenta-<correo>`, que la app escucha (`observarLector()` en el repositorio) y resume con `estadoDelLector()` de `domain/lector.js`. Los gastos y movimientos del correo, o enlazados con un aviso (`correoId`, `referencias`), que se borran en la app quedan `descartado` en lugar de borrarse, para que el script no los vuelva a crear; `gastosDelMes()` y `movimientosDelMes()` los ocultan.
 
 ## Mejoras posibles
 

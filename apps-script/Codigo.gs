@@ -3,20 +3,33 @@
  *
  * Corre dentro de tu cuenta de Google (script.google.com), no en la app.
  * Cada 5 minutos:
- *   1. Si en la app alguien tocó "Buscar gastos del mes en los correos",
- *      revisa todos los avisos de ese mes en este Gmail y anota los que falten.
- *   2. Si no, revisa los avisos de los últimos 2 días.
+ *   1. Si en la app alguien tocó "Buscar lo de (mes) en los correos", revisa
+ *      todos los avisos de ese mes en este Gmail y anota lo que falte.
+ *   2. Si se actualizó este script o cambiaron en la app las cuentas, las
+ *      tarjetas o los gastos fijos, vuelve a revisar el mes actual: así se
+ *      anota lo que antes no se pudo (por ejemplo, transferencias de una
+ *      cuenta que todavía no estaba registrada).
+ *   3. Si no, revisa los avisos de los últimos 2 días.
  *
- * Lee dos clases de avisos:
+ * Qué hace con cada aviso:
+ *   - Compra con tarjeta → gasto. Sube el saldo de la tarjeta de crédito o
+ *     baja el de la cuenta, si fue con débito.
+ *   - Cobro automático de un gasto fijo (universidad, internet…) → marca el
+ *     gasto fijo como pagado en Pagos, sin anotar un gasto aparte.
+ *   - Transferencia (Transfer365 y parecidas) → movimiento entre cuentas o
+ *     pago de tarjeta, con los saldos ajustados.
  *
- *   - Compras con tarjeta ("Compra por USD 2.00 en PUMA DIDEA con tarjeta
- *     terminada en 1234"): las anota como gasto. Si es una tarjeta de crédito
- *     registrada, se suma a su saldo; si es la tarjeta de débito de una cuenta,
- *     se resta del saldo de la cuenta.
- *   - Transferencias (Transfer365 y parecidas): dinero que sale de una cuenta,
- *     llega a otra o paga una tarjeta. Las anota como movimiento y ajusta los
- *     saldos. El mismo envío visto desde los dos bancos (mismo número de
- *     referencia) se anota una sola vez.
+ * Sin duplicados:
+ *   - Cada correo se anota una sola vez, aunque se revise el mes muchas veces.
+ *   - La misma transferencia avisada por los dos bancos (o en los Gmail de los
+ *     dos) se anota una vez: por el número de referencia o, si no coincide,
+ *     por monto, fecha y cuentas.
+ *   - Si ya lo habían anotado a mano en la app (un gasto, una transferencia,
+ *     el pago de una tarjeta o de un gasto fijo), el aviso se enlaza con eso
+ *     en lugar de anotarse otra vez.
+ *
+ * Los avisos que parecen transferencias pero no se pudieron leer quedan con
+ * la etiqueta "Cuentas Claras/Revisar" en Gmail y aparecen en la app.
  *
  * Los correos no salen de Google: el script lee Gmail y escribe directo en
  * tu base de datos de Firebase con tu propia cuenta.
@@ -26,11 +39,16 @@
  * Funciones para correr desde el editor:
  *   probarSinGuardar()            Muestra qué encontraría en los últimos días, sin guardar.
  *   probarMesSinGuardar()         Lo mismo con todo el mes actual.
+ *   verAvisosSinLeer()            Muestra el texto de los avisos del mes que no se
+ *                                 pudieron leer, para mandárselo a quien mantiene la app.
  *   instalarRevisionAutomatica()  Activa la revisión cada 5 minutos.
  *   detenerRevisionAutomatica()   La apaga.
  *   revisarCorreos()              Una revisión ahora (la que corre sola).
  *   revisarMesActual()            Busca y anota todo el mes actual ahora.
  */
+
+/** Cambia con cada versión del script: al cambiar, se vuelve a revisar el mes. */
+const VERSION_LECTOR = '2026-11-04';
 
 /* ------------------------------------------------------------------ */
 /* Ajustes: lo único que podría hacer falta cambiar                    */
@@ -43,17 +61,17 @@ const AJUSTES = {
   hogar: 'principal',
   /**
    * Qué correos son avisos del banco (sintaxis del buscador de Gmail). Para
-   * que sea más preciso, agregá el remitente de tu banco, por ejemplo:
-   *   'from:(notificaciones@tubanco.com)'
+   * que sea más preciso, agregá el remitente de tus bancos, por ejemplo:
+   *   'from:(notificaciones@bancocuscatlan.com OR notificaciones_bac@baccredomatic.com)'
    */
   filtro:
-    '(compra OR consumo OR cargo OR transacción OR transaccion OR autorizada OR aprobada OR transferencia OR transfer365 OR abono)',
+    '(compra OR consumo OR cargo OR transacción OR transaccion OR autorizada OR aprobada OR transferencia OR transfer365 OR abono OR traslado OR acreditado OR depósito OR deposito OR débito OR debito)',
   /** En la revisión de rutina, cuántos días hacia atrás mirar. */
   diasRecientes: 2,
   /** Cada cuántos minutos revisar: 5, 10, 15 o 30. */
   minutosEntreRevisiones: 5,
   /** Tope de correos al revisar un mes completo (cada ejecución tiene 6 minutos). */
-  maximoCorreosPorMes: 300,
+  maximoCorreosPorMes: 500,
   zonaHoraria: 'America/El_Salvador',
   /** Diferencia con UTC de la zona horaria (El Salvador no cambia de horario). */
   desfaseUtc: '-06:00',
@@ -76,8 +94,17 @@ function revisarCorreos() {
       atenderSolicitud_(solicitud, contexto);
       return;
     }
-    revisarRecientes_(contexto);
-    escribirEstadoCuenta_(contexto.cuenta, {});
+    // Si cambió el script o las cuentas, tarjetas o gastos fijos de la app,
+    // lo que antes no se pudo anotar quizá ahora sí: se revisa el mes de nuevo.
+    const huella = `${VERSION_LECTOR}|${contexto.huella}`;
+    if (huella !== propiedades.getProperty('ultimaHuella')) {
+      Logger.log('Cambió el lector o las cuentas, tarjetas o gastos fijos de la app: se revisa el mes actual.');
+      revisarMes_(mesActual_(), contexto);
+      propiedades.setProperty('ultimaHuella', huella);
+    } else {
+      revisarRecientes_(contexto);
+    }
+    escribirEstadoCuenta_(contexto, {});
   });
 }
 
@@ -86,8 +113,7 @@ function revisarMesActual() {
   conCandado_(() => {
     const contexto = crearContexto_({ guardar: true });
     revisarMes_(mesActual_(), contexto);
-    escribirEstadoCuenta_(contexto.cuenta, resumenParaGuardar_(contexto.resumen, { estado: 'listo', mes: mesActual_() }));
-    registrarResumen_(contexto);
+    escribirEstadoCuenta_(contexto, resumenParaGuardar_(contexto.resumen, { estado: 'listo', mes: mesActual_() }));
   });
 }
 
@@ -101,6 +127,22 @@ function probarMesSinGuardar() {
   const contexto = crearContexto_({ guardar: false });
   revisarMes_(mesActual_(), contexto);
   Logger.log('Prueba terminada: no se guardó nada.');
+}
+
+/**
+ * Muestra el texto completo de los avisos del mes que parecen transferencias
+ * pero no se pudieron leer. Copiá lo que sale en el registro y mandáselo a
+ * quien mantiene la app para que el lector aprenda ese formato.
+ */
+function verAvisosSinLeer() {
+  const contexto = crearContexto_({ guardar: false });
+  contexto.mostrarTextoSinLeer = true;
+  revisarMes_(mesActual_(), contexto);
+  Logger.log(
+    contexto.resumen.sinLeer
+      ? `Hay ${contexto.resumen.sinLeer} aviso(s) sin leer: su texto está arriba.`
+      : 'Todos los avisos del mes se pudieron leer.',
+  );
 }
 
 function instalarRevisionAutomatica() {
@@ -129,7 +171,7 @@ function detenerRevisionAutomatica() {
  * estas palabras evitan que se anote como compra.
  */
 const NO_ES_CARGO =
-  /(rechazad|declinad|denegad|no\s+autorizad|no\s+fue\s+aprobad|reversi[oó]n|reversad|reverso|anulad|devoluci[oó]n|reembolso|pago\s+recibido|hemos\s+recibido\s+(tu|su)\s+pago|abono\s+a\s+(tu|su)\s+tarjeta|pago\s+a\s+(tu|su)\s+tarjeta|pago\s+de\s+(tu|su)\s+tarjeta|transfer365|(tu|su)\s+transferencia|transferencia\s+(efectuada|realizada|recibida|enviada|exitosa|finalizada|entre)|abono\s+a\s+(tu\s+|su\s+)?cuenta|ha\s+recibido\s+un\s+abono)/i;
+  /(rechazad|declinad|denegad|no\s+autorizad|no\s+fue\s+aprobad|reversi[oó]n|reversad|reverso|anulad|devoluci[oó]n|reembolso|pago\s+recibido|hemos\s+recibido\s+(tu|su)\s+pago|abono\s+a\s+(tu|su)\s+tarjeta|pago\s+a\s+(tu|su)\s+tarjeta|pago\s+de\s+(tu|su)\s+tarjeta|transfer\s*365|(tu|su)\s+transferencia|transferencia\s+(efectuada|realizada|recibida|enviada|exitosa|finalizada|entre|a\s+terceros|propia|local|ach|interbancaria|de\s+fondos)|traslado\s+(de\s+fondos|entre\s+cuentas)|abono\s+a\s+(tu\s+|su\s+)?cuenta|(ha|has)\s+recibido\s+(un\s+abono|una\s+transferencia|dinero|un\s+dep[oó]sito)|(dep[oó]sito|cr[eé]dito)\s+a\s+(tu|su)\s+cuenta|acreditad[oa]s?\s+(a|en)\s+(tu|su)\s+cuenta)/i;
 
 /** Texto antes de un monto que dice que no es el monto de la compra. */
 const NO_ES_EL_MONTO = /(saldo|disponible|l[ií]mite|cr[eé]dito\s+disponible|pago\s+m[ií]nimo)[^$\d]{0,25}$/i;
@@ -201,16 +243,17 @@ function buscarComercio_(texto) {
   return null;
 }
 
+/** Texto del correo sin espacios raros ni retornos de carro. */
+function limpiarTexto_(texto) {
+  return String(texto || '').replace(/\u00a0/g, ' ').replace(/\r/g, '');
+}
+
 /**
  * Lee el texto de un correo (asunto + cuerpo).
  * @returns {{tipo:'cargo', monto:number, ultimos:string, comercio:string}
  *          |{tipo:'ignorar', motivo:string}|null}
  *   null si no parece un aviso de compra con tarjeta.
  */
-function limpiarTexto_(texto) {
-  return String(texto || '').replace(/\u00a0/g, ' ').replace(/\r/g, '');
-}
-
 function leerAviso(texto) {
   const t = limpiarTexto_(texto);
   const ultimos = buscarUltimos_(t);
@@ -245,14 +288,16 @@ function diasEntre_(a, b) {
 
 /**
  * Un gasto anotado a mano que parece ser la misma compra: mismo monto y
- * fecha con un día de diferencia como máximo. Devuelve su id, o null.
- * @param {{id:string, monto:number, fecha:string, origen?:string, descartado?:boolean}[]} gastos
+ * fecha con un día de diferencia como máximo (aunque se haya anotado con otro
+ * medio). No cuentan los que ya se enlazaron con otro aviso. Devuelve su id, o null.
+ * @param {{id:string, monto:number, fecha:string, origen?:string, descartado?:boolean, correoId?:string}[]} gastos
  */
 function buscarParecido(gastos, monto, fecha) {
   const parecido = gastos.find(
     (g) =>
       g.origen !== 'correo' &&
       !g.descartado &&
+      !g.correoId &&
       Math.abs(Number(g.monto) - monto) < 0.005 &&
       g.fecha &&
       diasEntre_(g.fecha, fecha) <= 1,
@@ -275,13 +320,49 @@ function claveDeCuenta(correo) {
   return String(correo || 'sin-correo').toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
+
 /* ------------------------------------------------------------------ */
 /* Leer una transferencia (funciones puras, con pruebas en tests/)    */
 /* ------------------------------------------------------------------ */
 
-/** Correos de transferencias: Transfer365, "ha recibido un abono a su cuenta"… */
-const ES_TRANSFERENCIA =
-  /transfer365|transferencia|abono\s+a\s+(?:tu\s+|su\s+)?cuenta|ha\s+recibido\s+un\s+abono|has\s+recibido\s+un\s+abono/i;
+/**
+ * Frases de un aviso de transferencia o movimiento entre cuentas. Son
+ * frases, no la palabra "transferencia" sola, para no confundir un aviso de
+ * compra cuyo pie dice "Hacé tus transferencias en línea".
+ */
+const ES_TRANSFERENCIA = new RegExp(
+  [
+    'transfer\\s*365',
+    '(?:su|tu)\\s+transferencia',
+    '(?:una|la)\\s+transferencia',
+    'transferencia\\s+(?:efectuada|realizada|recibida|enviada|exitosa|finalizada|entre|a\\s+terceros|propia|local|ach|interbancaria|de\\s+fondos|electr[oó]nica|inmediata|procesada|aplicada)',
+    'transferencias?\\s+entre\\s+cuentas',
+    'traslado\\s+(?:de\\s+fondos|entre\\s+cuentas)',
+    'abono\\s+a\\s+(?:tu\\s+|su\\s+)?cuenta',
+    '(?:ha|has)\\s+recibido\\s+(?:un\\s+abono|una\\s+transferencia|dinero|un\\s+dep[oó]sito|fondos)',
+    'recibiste\\s+(?:dinero|una\\s+transferencia|un\\s+dep[oó]sito|fondos|\\$|us\\$|usd)',
+    '(?:dep[oó]sito|cr[eé]dito)\\s+a\\s+(?:tu|su)\\s+cuenta',
+    'acreditad[oa]s?\\s+(?:a|en)\\s+(?:tu|su)\\s+cuenta',
+    'env[ií]o\\s+de\\s+dinero',
+    '(?:te|le)\\s+(?:han\\s+)?(?:enviado|transferido|depositado)',
+    'transferiste|enviaste\\s+(?:dinero|\\$|us\\$|usd)',
+  ].join('|'),
+  'i',
+);
+
+/**
+ * Pago de una tarjeta de crédito. Solo se lee si el aviso dice de qué cuenta
+ * salió el dinero; el "recibimos su pago" del banco de la tarjeta no se anota
+ * (el pago ya llega por el aviso de la cuenta de donde salió).
+ */
+const ES_PAGO_DE_TARJETA = /pago\s+(?:a|de)\s+(?:su\s+|tu\s+|la\s+)?tarjeta/i;
+
+/** Avisos de compra: estos nunca son transferencias. */
+const ES_AVISO_DE_COMPRA = /(^|\n)[\s•·*-]*(comercio|establecimiento)\s*:|\bcompra\s+(aprobada|autorizada|realizada|exitosa|por)\b/i;
+
+/** El dueño del correo recibe el dinero (si no, lo manda). */
+const ES_ENTRADA =
+  /(?:ha|has)\s+recibido|recibiste|(?:te|le)\s+(?:han\s+)?(?:transferido|enviado|depositado)|acreditad[oa]s?\s+(?:a|en)\s+(?:su|tu)\s+cuenta|(?:abono|dep[oó]sito|cr[eé]dito)\s+a\s+(?:su|tu)\s+cuenta/i;
 
 /** Transferencias que no se hicieron. */
 const TRANSFERENCIA_FALLIDA = /rechazad|no\s+fue\s+(?:aplicad|procesad|realizad|exitos)|no\s+se\s+pudo|fallid|revertid|reversi[oó]n/i;
@@ -342,7 +423,7 @@ function camposDelCorreo_(texto) {
   let seccion = '';
   for (let i = 0; i < lineas.length; i += 1) {
     const linea = lineas[i];
-    const encabezado = /^informaci[oó]n\s+(?:de\s+|del\s+)?(origen|destino)\s*:?$/i.exec(linea);
+    const encabezado = /^(?:informaci[oó]n|datos)\s+(?:de\s+|del\s+)?(origen|destino)\s*:?$/i.exec(linea);
     if (encabezado) {
       seccion = normalizar_(encabezado[1]);
       continue;
@@ -365,9 +446,9 @@ function buscarCampo_(campos, patron, seccion) {
   return campo ? campo.valor : '';
 }
 
-/** "X8320", "*****8320", "TARJETA DE CREDITO XXXXXX4200" → los últimos 4 dígitos. */
+/** "X8320", "*****8320", "TARJETA DE CREDITO XXXXXX4200", "***421" → los últimos dígitos (3 o 4). */
 function ultimosDe_(valor) {
-  const m = /(\d{4})\D*$/.exec(String(valor || ''));
+  const m = /(\d{3,4})\D*$/.exec(String(valor || ''));
   return m ? m[1] : null;
 }
 
@@ -375,6 +456,19 @@ function ultimosDe_(valor) {
 function montoDe_(valor) {
   const m = /(\d[\d.,]*)/.exec(String(valor || '').replace(/US\$|USD|\$/gi, ' '));
   return m ? aNumero_(m[1]) : null;
+}
+
+/** El primer monto con moneda de un texto que no sea un saldo ni una comisión. */
+function montoEnTexto_(texto) {
+  const montos = /(?:US\$|USD|\$)\s?(\d[\d.,]*\d|\d)/gi;
+  let m;
+  while ((m = montos.exec(texto))) {
+    const antes = texto.slice(Math.max(0, m.index - 40), m.index);
+    if (/(saldo|disponible|comisi[oó]n|l[ií]mite|iva)[^$\d]{0,30}$/i.test(antes)) continue;
+    const n = aNumero_(m[1]);
+    if (n) return n;
+  }
+  return null;
 }
 
 /** "02/11/2026 12:35:20 A.M." (día/mes/año) o "2026-11-02T12:35:35-06:00" → "2026-11-02". */
@@ -403,16 +497,43 @@ function textoUtil_(valor) {
   return t;
 }
 
+/** Etiquetas de la cuenta de donde sale el dinero (ya sin tildes ni puntuación). */
+const ETIQUETA_ORIGEN =
+  /^(producto|cuenta|tarjeta|numero de cuenta)( de)? (origen|debito|cargo|a debitar|debitada|que envia|remitente)$|^cuenta debitada$|^cuenta de cargo$|^debitado de$|^desde( la)? cuenta$|^de la cuenta$/;
+/** Etiquetas de la cuenta o tarjeta a donde llega. */
+const ETIQUETA_DESTINO =
+  /^(producto|cuenta|tarjeta|numero de cuenta)( de)? (destino|credito|abono|a acreditar|acreditada|beneficiaria|del beneficiario|a pagar|pagada|que recibe)$|^cuenta acreditada$|^cuenta beneficiaria$|^acreditado a$|^hacia( la)? cuenta$|^a la cuenta$/;
+/** Etiquetas del monto, sin saldos ni comisiones. */
+const ETIQUETA_MONTO = /^(monto|importe|valor|cantidad|total)( |$)(?!.*(disponible|saldo|comision|iva|cargo por))/;
+
+/** "cuenta de ahorro X1421", "cuenta ****1421", "cuenta terminada en 1421". */
+const CUENTA_EN_ORACION = String.raw`cuenta(?:\s+de\s+ahorros?|\s+corriente)?\s*(?:n[uú]mero|no\.?|#)?\s*(?:terminada\s+en\s+)?[x*•·#.\-]*\s*(\d[\d\-]{2,})`;
+const PROPIA_EN_ORACION = new RegExp(String.raw`\b(?:a|de|desde|en)\s+(?:su|tu)\s+` + CUENTA_EN_ORACION, 'i');
+const ORIGEN_EN_ORACION = new RegExp(String.raw`\bdesde\s+(?:la\s+)?` + CUENTA_EN_ORACION, 'i');
+const DESTINO_EN_ORACION = new RegExp(String.raw`\b(?:a|hacia|para)\s+(?:la\s+)?` + CUENTA_EN_ORACION, 'i');
+const TARJETA_EN_ORACION =
+  /\b(?:a|hacia|para|de)\s+(?:la\s+|su\s+|tu\s+)?tarjeta(?:\s+de\s+cr[eé]dito)?\s*(?:terminada\s+en\s+)?[x*•·#.\-]*\s*(\d[\d\-]{2,})/i;
+
+/** Busca el patrón y devuelve los últimos dígitos y el banco que se nombra justo después. */
+function cuentaEnOracion_(patron, texto) {
+  const m = patron.exec(texto);
+  if (!m) return null;
+  const despues = texto.slice(m.index + m[0].length, m.index + m[0].length + 50);
+  return { ultimos: ultimosDe_(m[1]), banco: normalizarBanco(despues.split(/[.\n]/)[0]) };
+}
+
 /**
  * @typedef {Object} ExtremoLeido  Un lado de la transferencia según el correo.
  * @property {string} banco  Clave del banco (ver BANCOS_SV) o "".
- * @property {string|null} ultimos  Últimos 4 dígitos de la cuenta o tarjeta.
+ * @property {string|null} ultimos  Últimos dígitos de la cuenta o tarjeta.
  * @property {boolean} esTarjeta  Si es una tarjeta de crédito.
  * @property {string} persona  Nombre del titular, si el correo lo dice.
  */
 
 /**
- * Lee un correo de transferencia (Transfer365 y parecidos).
+ * Lee un correo de transferencia (Transfer365 y parecidos). Entiende los
+ * datos en forma de lista ("Producto Origen: X8320") y en una oración
+ * ("transferiste $50.00 desde tu cuenta ****1421 a la cuenta ****5555").
  * @param {string} texto  Asunto + cuerpo.
  * @param {string} [remitente]  "Notificaciones Banco Cuscatlán <…>"; dice de qué banco es el correo.
  * @returns {{tipo:'movimiento', monto:number, fecha:string|null, referencia:string|null,
@@ -422,67 +543,102 @@ function textoUtil_(valor) {
  */
 function leerMovimiento(texto, remitente) {
   const t = limpiarTexto_(texto);
-  if (!ES_TRANSFERENCIA.test(t)) return null;
+  const esTransferencia = ES_TRANSFERENCIA.test(t);
+  const esPagoDeTarjeta = !esTransferencia && ES_PAGO_DE_TARJETA.test(t);
+  if (!esTransferencia && !esPagoDeTarjeta) return null;
+  if (ES_AVISO_DE_COMPRA.test(t) && !/transfer\s*365/i.test(t)) return null;
+
   const campos = camposDelCorreo_(t);
   const valor = (patron, seccion) => buscarCampo_(campos, patron, seccion);
-  const monto = montoDe_(valor(/^(monto|importe|valor|total|cantidad)( transferid[oa]| debitad[oa]| acreditad[oa])?$/));
+  const monto = montoDe_(valor(ETIQUETA_MONTO)) || montoEnTexto_(t);
   if (!monto) return null;
   const fallida = TRANSFERENCIA_FALLIDA.exec(t);
   if (fallida) return { tipo: 'ignorar', motivo: fallida[0] };
 
-  // ¿El dueño del correo recibe el dinero o lo manda?
-  const entrada = /(?:ha|has)\s+recibido|recibiste|le\s+han\s+(?:transferido|enviado)|acreditad[oa]\s+a\s+(?:su|tu)\s+cuenta/i.test(t);
+  const entrada = ES_ENTRADA.test(t);
   const banco = bancoDelCorreo_(remitente, t);
 
-  let ultimosOrigen = ultimosDe_(
-    valor(/^(producto|cuenta|tarjeta)( de)? origen$|^cuenta debitada$|^cuenta de cargo$/) ||
-      valor(/^(cuenta|producto|numero de cuenta)$/, 'origen'),
-  );
-  const productoDestino =
-    valor(/^(producto|cuenta|tarjeta)( de)? destino$|^cuenta acreditada$|^cuenta beneficiaria$/) ||
-    valor(/^(cuenta|producto|numero de cuenta)$/, 'destino');
+  // 1. Los datos en forma de lista.
+  let ultimosOrigen = ultimosDe_(valor(ETIQUETA_ORIGEN) || valor(/^(cuenta|producto|numero de cuenta)$/, 'origen'));
+  const productoDestino = valor(ETIQUETA_DESTINO) || valor(/^(cuenta|producto|numero de cuenta)$/, 'destino');
   let ultimosDestino = ultimosDe_(productoDestino);
+  let bancoOrigenLeido = normalizarBanco(valor(/^banco( de)? (origen|emisor|ordenante|que envia)$/));
+  let bancoDestinoLeido = normalizarBanco(valor(/^banco( de)? (destino|receptor|beneficiario|que recibe)$/));
+  const tipoTransaccion = valor(/^tipo( de)? (transaccion|operacion|producto|cuenta)$/);
+  let destinoEsTarjeta = /tarjeta|credito/i.test(normalizar_(`${productoDestino} ${tipoTransaccion}`));
 
-  // La cuenta propia a veces solo aparece en la oración: "abono a su CUENTA DE AHORRO X1421".
-  const propia =
-    /(?:a|de|desde)\s+(?:su|tu)\s+cuenta(?:\s+de\s+ahorros?|\s+corriente)?\s*(?:n[uú]mero|no\.?)?\s*[x*•·#-]*\s*(\d{4})\b/i.exec(t);
+  // 2. Lo que falte, de las oraciones: "abono a su CUENTA DE AHORRO X1421",
+  //    "desde la cuenta ****8320 de BAC", "a la tarjeta terminada en 4200".
+  const propia = cuentaEnOracion_(PROPIA_EN_ORACION, t);
   if (propia) {
-    if (entrada && !ultimosDestino) ultimosDestino = propia[1];
-    if (!entrada && !ultimosOrigen) ultimosOrigen = propia[1];
+    if (entrada && !ultimosDestino) ultimosDestino = propia.ultimos;
+    if (!entrada && !ultimosOrigen) ultimosOrigen = propia.ultimos;
+  }
+  const origen = !ultimosOrigen && cuentaEnOracion_(ORIGEN_EN_ORACION, t);
+  if (origen) {
+    ultimosOrigen = origen.ultimos;
+    bancoOrigenLeido = bancoOrigenLeido || origen.banco;
+  }
+  if (!ultimosDestino) {
+    const tarjeta = cuentaEnOracion_(TARJETA_EN_ORACION, t);
+    const cuenta = !tarjeta && cuentaEnOracion_(DESTINO_EN_ORACION, t);
+    const destino = tarjeta || cuenta;
+    if (destino) {
+      ultimosDestino = destino.ultimos;
+      bancoDestinoLeido = bancoDestinoLeido || destino.banco;
+      destinoEsTarjeta = destinoEsTarjeta || Boolean(tarjeta);
+    }
   }
 
-  const bancoOrigenLeido = normalizarBanco(valor(/^banco( de)? (origen|emisor|ordenante)$/));
-  const bancoDestinoLeido = normalizarBanco(valor(/^banco( de)? (destino|receptor|beneficiario)$/));
-  // Un aviso de compra que solo menciona "transferencias" (en la publicidad del pie, por
-  // ejemplo) no trae cuentas ni bancos de origen o destino: no es una transferencia.
+  // Un aviso que no trae ninguna cuenta ni banco de origen o destino no es una transferencia.
   if (!ultimosOrigen && !ultimosDestino && !bancoOrigenLeido && !bancoDestinoLeido) return null;
+  // Un pago de tarjeta solo se lee si dice de qué cuenta salió (ver ES_PAGO_DE_TARJETA).
+  if (esPagoDeTarjeta && !ultimosOrigen) return null;
+  if (esPagoDeTarjeta) destinoEsTarjeta = true;
+
   const bancoOrigen = bancoOrigenLeido || (entrada ? '' : banco);
   const bancoDestino = bancoDestinoLeido || (entrada ? banco : '');
-  const tipoTransaccion = valor(/^tipo( de)? (transaccion|operacion|producto)$/);
+  const referencia = valor(/referencia|comprobante|autorizacion|numero de (transaccion|operacion)|no (de )?(transaccion|operacion)|id de (transaccion|operacion)/);
 
   return {
     tipo: 'movimiento',
     monto,
     fecha: fechaDe_(valor(/^fecha/)),
-    referencia: (valor(/referencia/).match(/[A-Za-z0-9-]{6,}/) || [null])[0],
+    referencia: (referencia.match(/[A-Za-z0-9-]{6,}/) || [null])[0],
     entrada,
     desde: {
       banco: bancoOrigen,
       ultimos: ultimosOrigen,
       esTarjeta: false,
-      persona: textoUtil_(valor(/^(originado por|ordenante|remitente|enviado por)$/)),
+      persona: textoUtil_(valor(/^(originado por|ordenante|remitente|enviado por|de parte de)$/)),
     },
     hacia: {
       banco: bancoDestino,
       ultimos: ultimosDestino,
-      esTarjeta: /tarjeta|credito/i.test(normalizar_(`${productoDestino} ${tipoTransaccion}`)),
-      persona: textoUtil_(valor(/^(beneficiario|cliente|destinatario|nombre del beneficiario)$/)),
+      esTarjeta: destinoEsTarjeta,
+      persona: textoUtil_(valor(/^(beneficiario|cliente|destinatario|nombre del beneficiario|para)$/)),
     },
-    concepto: textoUtil_(valor(/^(concepto|descripcion|comentario)$/)),
+    concepto: textoUtil_(valor(/^(concepto|descripcion|comentario|motivo)$/)),
   };
 }
 
-const mismosUltimos_ = (a, b) => Boolean(a && b) && String(a).padStart(4, '0') === String(b).padStart(4, '0');
+/**
+ * Un aviso que parece una transferencia (trae un monto y frases de
+ * transferencia) pero que leerMovimiento no pudo leer. Esos no se anotan
+ * como compra: quedan para revisar y aparecen en la app.
+ */
+function pareceTransferenciaSinLeer(texto) {
+  const t = limpiarTexto_(texto);
+  return ES_TRANSFERENCIA.test(t) && !ES_AVISO_DE_COMPRA.test(t) && !TRANSFERENCIA_FALLIDA.test(t) && Boolean(montoEnTexto_(t) || /monto\s*:/i.test(t));
+}
+
+/** Los mismos últimos dígitos (los avisos a veces muestran solo 3). */
+const mismosUltimos_ = (a, b) => {
+  const x = String(a || '');
+  const y = String(b || '');
+  if (x.length < 3 || y.length < 3) return false;
+  return x.endsWith(y) || y.endsWith(x);
+};
 const bancoCompatible_ = (claveLeida, bancoRegistrado) => {
   const registrado = normalizarBanco(bancoRegistrado);
   return !claveLeida || !registrado || registrado === claveLeida;
@@ -490,11 +646,11 @@ const bancoCompatible_ = (claveLeida, bancoRegistrado) => {
 
 /**
  * Busca en la app la cuenta o tarjeta de un lado de la transferencia.
- * - Por los últimos 4 dígitos (si el banco no contradice).
+ * - Por los últimos dígitos (si el banco no contradice).
  * - Si el correo no trae dígitos, por el banco, cuando solo hay una cuenta en ese banco.
  * @returns {{referencia:string, nombre:string}|null}
  */
-function resolverExtremo_(extremo, cuentas, tarjetas) {
+function resolverExtremo_(extremo, cuentas, tarjetas, { adivinarPorBanco = true } = {}) {
   const comoCuenta = (c) => ({ referencia: `cuenta:${c.id}`, nombre: c.nombre });
   const comoTarjeta = (t) => ({ referencia: `tarjeta:${t.id}`, nombre: t.nombre });
   const listaDeTarjetas = Object.keys(tarjetas).map((ultimos) => ({ ...tarjetas[ultimos], ultimos }));
@@ -508,7 +664,7 @@ function resolverExtremo_(extremo, cuentas, tarjetas) {
     if (cuenta) return comoCuenta(cuenta);
     return tarjeta ? comoTarjeta(tarjeta) : null;
   }
-  if (!extremo.esTarjeta && extremo.banco) {
+  if (adivinarPorBanco && !extremo.esTarjeta && extremo.banco) {
     const delBanco = cuentas.filter((c) => normalizarBanco(c.banco) === extremo.banco);
     if (delBanco.length === 1) return comoCuenta(delBanco[0]);
   }
@@ -524,8 +680,12 @@ function resolverExtremo_(extremo, cuentas, tarjetas) {
  *   "externo" en el lado que no está en la app; null si ninguno de los dos lados está.
  */
 function resolverMovimiento(movimiento, cuentas, tarjetas) {
-  const desde = resolverExtremo_(movimiento.desde, cuentas, tarjetas);
-  const hacia = resolverExtremo_(movimiento.hacia, cuentas, tarjetas);
+  // Un lado sin dígitos se adivina por el banco solo si es el lado del dueño del
+  // correo: si el aviso es de que salió dinero, la cuenta de origen es la suya en
+  // ese banco; si es de que llegó, la de destino. El otro lado podría ser de
+  // cualquier persona con cuenta en ese banco: solo se reconoce por sus dígitos.
+  const desde = resolverExtremo_(movimiento.desde, cuentas, tarjetas, { adivinarPorBanco: !movimiento.entrada });
+  const hacia = resolverExtremo_(movimiento.hacia, cuentas, tarjetas, { adivinarPorBanco: Boolean(movimiento.entrada) });
   // Solo se mueve dinero desde una cuenta; una tarjeta de crédito no es origen.
   const desdeValido = desde && desde.referencia.startsWith('cuenta:') ? desde : null;
   if (!desdeValido && !hacia) return null;
@@ -556,19 +716,51 @@ function notaDeMovimiento(movimiento, resuelto) {
 }
 
 /**
- * Id del movimiento: por el número de referencia, que es el mismo en los
- * correos de los dos bancos; si no hay, por el id del correo.
+ * Clave del aviso: por el número de referencia, que suele ser el mismo en
+ * los correos de los dos bancos; si no hay, por el id del correo. Es el id
+ * del movimiento cuando se crea, y se guarda en `referencias` cuando el
+ * aviso se enlaza con un movimiento que ya existía.
  */
 function idDeMovimiento(movimiento, idCorreo) {
   const referencia = String(movimiento.referencia || '').replace(/[^A-Za-z0-9-]/g, '');
   return referencia ? `ref-${referencia}` : `correo-${idCorreo}`;
 }
 
+/** Si un movimiento ya conoce este aviso (es su id o está en sus referencias). */
+const yaConoceElAviso = (m, clave) => m.id === clave || (m.referencias || []).includes(clave);
+
+/** El lado que avisa: el banco de donde sale el dinero o el banco a donde llega. */
+const ladoDelAviso = (movimiento) => (movimiento.entrada ? 'entra' : 'sale');
+
 /**
- * Otro movimiento del mes que parece el mismo envío: mismo monto, fecha
- * con un día de diferencia como máximo y la misma cuenta o tarjeta en
- * algún lado. Sirve cuando los dos bancos usan referencias distintas, o
- * cuando ya se había anotado a mano. Devuelve su id, o null.
+ * El mismo envío ya anotado: avisado por el otro banco (o en el otro Gmail)
+ * con otra referencia, o anotado a mano en la app. Mismo monto, hasta 2 días
+ * de diferencia, las mismas cuentas (o una que en un aviso no se conocía) y
+ * que todavía no se haya enlazado un aviso de este mismo lado (dos avisos
+ * del mismo lado con referencias distintas son dos transferencias).
+ * Incluye los borrados en la app, para no volver a crearlos.
+ * @param {{id:string, monto:number, fecha:string, desde:string, hacia:string, lado:string}} nuevo
+ */
+function buscarMismoMovimiento(movimientos, nuevo) {
+  const compatible = (a, b) => a === b || a === 'externo' || b === 'externo';
+  const candidatos = movimientos.filter(
+    (m) =>
+      Math.abs(Number(m.monto) - nuevo.monto) < 0.005 &&
+      m.fecha &&
+      diasEntre_(m.fecha, nuevo.fecha) <= 2 &&
+      compatible(m.desde, nuevo.desde) &&
+      compatible(m.hacia, nuevo.hacia) &&
+      ((nuevo.desde !== 'externo' && m.desde === nuevo.desde) || (nuevo.hacia !== 'externo' && m.hacia === nuevo.hacia)) &&
+      !(m.lados || []).includes(nuevo.lado),
+  );
+  candidatos.sort((a, b) => diasEntre_(a.fecha, nuevo.fecha) - diasEntre_(b.fecha, nuevo.fecha));
+  return candidatos[0] || null;
+}
+
+/**
+ * Otro movimiento del mes que se parece (mismo monto, ±1 día y una cuenta
+ * en común) sin ser claramente el mismo: el nuevo se anota marcado
+ * "¿Repetido?" para que decidan. Devuelve su id, o null.
  */
 function buscarMovimientoParecido(movimientos, nuevo) {
   const comparte = (m) =>
@@ -577,6 +769,8 @@ function buscarMovimientoParecido(movimientos, nuevo) {
     (m) =>
       m.id !== nuevo.id &&
       !m.descartado &&
+      // Dos avisos del mismo lado con referencias distintas son dos transferencias.
+      !(m.origen === 'correo' && (m.lados || []).includes(nuevo.lado)) &&
       Math.abs(Number(m.monto) - nuevo.monto) < 0.005 &&
       m.fecha &&
       diasEntre_(m.fecha, nuevo.fecha) <= 1 &&
@@ -586,15 +780,17 @@ function buscarMovimientoParecido(movimientos, nuevo) {
 }
 
 /**
- * Si la transferencia paga una tarjeta y en la app ya se marcó a mano un
- * pago de esa tarjeta por el mismo monto, devuelve "pago:tarjeta_<id>".
- * @param {Object<string, {monto:number}>} pagados  Pagos marcados en el mes.
+ * Si la transferencia paga una tarjeta y en Pagos ya marcaron a mano el pago
+ * de esa tarjeta por el mismo monto, devuelve ese pago: el aviso se enlaza
+ * con él en lugar de anotarse otra vez.
+ * @param {Object<string, {monto:number, desde?:string, correo?:string}>} pagados  Pagos marcados en el mes.
+ * @returns {{clave:string, pago:Object}|null}
  */
-function pagoDeTarjetaParecido(pagados, hacia, monto) {
+function pagoDeTarjetaMarcado(pagados, hacia, monto) {
   if (!String(hacia).startsWith('tarjeta:')) return null;
   const clave = `tarjeta_${hacia.slice('tarjeta:'.length)}`;
   const pago = pagados[clave];
-  return pago && Math.abs(Number(pago.monto) - monto) < 0.005 ? `pago:${clave}` : null;
+  return pago && !pago.correo && Math.abs(Number(pago.monto) - monto) < 0.005 ? { clave, pago } : null;
 }
 
 /**
@@ -609,6 +805,95 @@ function destinoDelCargo(aviso, tarjetas, cuentas) {
   const cuenta = cuentas.find((c) => mismosUltimos_(c.debito, aviso.ultimos)) || cuentas.find((c) => mismosUltimos_(c.ultimos, aviso.ultimos));
   if (cuenta) return { medio: `cuenta:${cuenta.id}`, coleccion: 'cuentas', id: cuenta.id, nombre: `débito ${cuenta.nombre}`, delta: -aviso.monto };
   return { medio: 'efectivo', coleccion: null, id: null, nombre: '', delta: 0 };
+}
+
+/**
+ * Un gasto anotado a mano que es la misma compra: mismo monto, mismo medio
+ * (la misma tarjeta o el mismo débito), un día de diferencia como máximo y
+ * que todavía no se haya enlazado con otro aviso. El aviso se enlaza con él.
+ */
+function buscarGastoIgual(gastos, cobro) {
+  const iguales = gastos.filter(
+    (g) =>
+      g.origen !== 'correo' &&
+      !g.descartado &&
+      !g.correoId &&
+      g.medio === cobro.medio &&
+      Math.abs(Number(g.monto) - cobro.monto) < 0.005 &&
+      g.fecha &&
+      diasEntre_(g.fecha, cobro.fecha) <= 1,
+  );
+  iguales.sort((a, b) => diasEntre_(a.fecha, cobro.fecha) - diasEntre_(b.fecha, cobro.fecha));
+  return iguales[0] || null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Cobros automáticos de gastos fijos (funciones puras, con pruebas)  */
+/* ------------------------------------------------------------------ */
+
+/** Palabras del nombre de un gasto fijo que no sirven para reconocerlo. */
+const PALABRAS_COMUNES = new Set(
+  'pago pagos cuota cuotas mensual mensualidad servicio servicios plan recibo factura cargo gasto gastos fijo fijos casa para por del las los una uno con'.split(' '),
+);
+
+/**
+ * Palabras para reconocer el gasto fijo en el aviso: lo que escribieron en
+ * "Cómo aparece en el correo" (separado por comas) o, si no, las palabras de
+ * 4 letras o más de su nombre ("Universidad" sí; "Luz" no).
+ */
+function palabrasDelFijo(fijo) {
+  const limpiar = (p) => normalizar_(p).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (fijo.comercio) {
+    return String(fijo.comercio).split(/[,;/\n]+/).map(limpiar).filter((p) => p.length >= 2);
+  }
+  return limpiar(fijo.nombre)
+    .split(' ')
+    .filter((p) => p.length >= 4 && !PALABRAS_COMUNES.has(p));
+}
+
+/**
+ * ¿Este cobro es el pago automático de un gasto fijo?
+ * - Por el nombre: el comercio o beneficiario del aviso trae alguna palabra
+ *   del gasto fijo, y se pagó con el medio del fijo (o el fijo no tiene medio).
+ * - Por el monto: el mismo monto exacto, con la misma tarjeta o cuenta del
+ *   fijo, y a 3 días o menos de su día de pago.
+ * @param {{id:string, nombre:string, monto:number, dia:number, medio?:string, comercio?:string}[]} fijos
+ * @param {Object<string, Object>} pagados  Pagos marcados del mes.
+ * @param {{monto:number, fecha:string, medio:string, texto:string}} cobro
+ * @returns {{fijo:Object, clave:string, porNombre:boolean, yaPagado:boolean}|null}
+ */
+function buscarFijoDelCobro(fijos, pagados, cobro) {
+  const texto = ` ${normalizar_(cobro.texto).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ')} `;
+  const dia = Number(String(cobro.fecha).slice(8, 10));
+  const candidatos = fijos
+    .map((fijo) => {
+      const medioDelFijo = fijo.medio && fijo.medio !== 'efectivo' ? fijo.medio : null;
+      const mismoMedio = medioDelFijo === cobro.medio;
+      // La palabra tiene que empezar donde empieza una palabra del aviso.
+      const porNombre = palabrasDelFijo(fijo).some((p) => texto.includes(` ${p}`));
+      const distancia = Math.abs(dia - Number(fijo.dia));
+      const cerca = distancia <= 3 || distancia >= 27; // el 30 y el 1 están cerca
+      const mismoMonto = Math.abs(Number(fijo.monto) - cobro.monto) < 0.005;
+      const sirve = (porNombre && (!medioDelFijo || mismoMedio)) || (mismoMedio && mismoMonto && cerca);
+      if (!sirve) return null;
+      const clave = `fijo_${fijo.id}`;
+      return { fijo, clave, porNombre, yaPagado: Boolean(pagados[clave]), distancia };
+    })
+    .filter(Boolean);
+  candidatos.sort(
+    (a, b) => Number(b.porNombre) - Number(a.porNombre) || Number(a.yaPagado) - Number(b.yaPagado) || a.distancia - b.distancia,
+  );
+  if (!candidatos.length) return null;
+  const { fijo, clave, porNombre, yaPagado } = candidatos[0];
+  return { fijo, clave, porNombre, yaPagado };
+}
+
+/** Número corto que cambia cuando cambia el texto (para notar cambios en la app). */
+function huella(texto) {
+  let h = 0;
+  const t = String(texto);
+  for (let i = 0; i < t.length; i += 1) h = (Math.imul(31, h) + t.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
 }
 
 /* ------------------------------------------------------------------ */
@@ -632,6 +917,7 @@ function mesActual_() {
 function crearContexto_({ guardar }) {
   const tarjetas = leerTarjetas_();
   const cuentas = leerCuentas_();
+  const fijos = leerFijos_();
   Logger.log(`Tarjetas en la app: ${Object.keys(tarjetas).map((u) => `••${u}`).join(', ') || 'ninguna'}`);
   Logger.log(`Cuentas en la app: ${cuentas.map((c) => c.nombre).join(', ') || 'ninguna'}`);
   /** Lo ya guardado de cada mes, leído una sola vez por ejecución. */
@@ -644,68 +930,162 @@ function crearContexto_({ guardar }) {
     guardar,
     tarjetas,
     cuentas,
+    fijos,
+    /** Cambia si cambian las cuentas, tarjetas o gastos fijos de la app. */
+    huella: huella(JSON.stringify([tarjetas, cuentas, fijos])),
     cuenta: Session.getEffectiveUser().getEmail(),
     etiquetas: guardar
       ? { registrado: obtenerEtiqueta_(AJUSTES.etiquetaRegistrado), revisar: obtenerEtiqueta_(AJUSTES.etiquetaRevisar) }
       : null,
+    /** Avisos que no se pudieron anotar, para mostrarlos en la app (ver pendientes). */
+    pendientes: guardar ? leerPendientes_() : {},
     gastosDelMes: (mes) => delMes('gastos', mes, leerGastosDelMes_),
     movimientosDelMes: (mes) => delMes('movimientos', mes, leerMovimientosDelMes_),
     pagadosDelMes: (mes) => delMes('pagados', mes, leerPagadosDelMes_),
     resumen: {
       nuevos: 0,
       movimientos: 0,
+      fijos: 0,
+      enlazados: 0,
       yaEstaban: 0,
       ignorados: 0,
       sinTarjeta: 0,
       sinCuenta: 0,
+      sinLeer: 0,
       posiblesRepetidos: [],
       correosRevisados: 0,
     },
   };
 }
 
+/** Lo que se escribe en Firestore por las compras, cobros y transferencias que pasan por la cuenta o tarjeta. */
+function saldosDelMedio_(medio, monto, contexto, signo = 1) {
+  const [tipo, id] = String(medio).split(':');
+  if (tipo === 'tarjeta' && Object.keys(contexto.tarjetas).some((u) => contexto.tarjetas[u].id === id)) {
+    return [escrituraSaldo_('tarjetas', id, monto * signo)];
+  }
+  if (tipo === 'cuenta' && contexto.cuentas.some((c) => c.id === id)) return [escrituraSaldo_('cuentas', id, -monto * signo)];
+  return [];
+}
+
 /**
- * Revisa un correo y, si es una compra o una transferencia que falta, la anota.
- * @returns {'no-es-aviso'|'ignorado'|'ya-estaba'|'prueba'|'guardado'|'sin-tarjeta'}
+ * Revisa un correo: compra, cobro de un gasto fijo o transferencia.
+ * @returns {'no-es-aviso'|'ignorado'|'ya-estaba'|'prueba'|'guardado'|'sin-tarjeta'|'sin-cuenta'|'sin-leer'}
  */
 function revisarMensaje_(mensaje, contexto) {
   const { resumen } = contexto;
   resumen.correosRevisados += 1;
+  contexto.ultimoPendiente = null;
   const texto = `${mensaje.getSubject()}\n${mensaje.getPlainBody()}`;
   const movimiento = leerMovimiento(texto, mensaje.getFrom());
-  if (movimiento) return revisarMovimiento_(mensaje, movimiento, contexto);
-  const aviso = leerAviso(texto);
-  if (!aviso) return 'no-es-aviso';
-  if (aviso.tipo === 'ignorar') {
-    Logger.log(`Ignorado (${aviso.motivo}): ${mensaje.getSubject()}`);
-    resumen.ignorados += 1;
-    return 'ignorado';
+  let resultado;
+  if (movimiento) {
+    resultado = revisarMovimiento_(mensaje, movimiento, contexto);
+  } else {
+    const aviso = leerAviso(texto);
+    if (aviso && aviso.tipo === 'cargo') {
+      resultado = revisarCargo_(mensaje, aviso, contexto);
+    } else if (pareceTransferenciaSinLeer(texto)) {
+      resultado = avisoSinLeer_(mensaje, texto, contexto);
+    } else if (aviso) {
+      Logger.log(`Ignorado (${aviso.motivo}): ${mensaje.getSubject()}`);
+      resumen.ignorados += 1;
+      resultado = 'ignorado';
+    } else {
+      resultado = 'no-es-aviso';
+    }
   }
+  // Lo que no se pudo anotar queda pendiente (y se muestra en la app) hasta que se pueda.
+  if (contexto.guardar) {
+    if (resultado === 'sin-leer' || resultado === 'sin-cuenta') {
+      contexto.pendientes[mensaje.getId()] = {
+        fecha: Utilities.formatDate(mensaje.getDate(), AJUSTES.zonaHoraria, 'yyyy-MM-dd'),
+        texto: contexto.ultimoPendiente || mensaje.getSubject(),
+      };
+    } else {
+      delete contexto.pendientes[mensaje.getId()];
+    }
+  }
+  return resultado;
+}
 
+/** Un aviso que parece una transferencia pero no se pudo leer: queda para revisar. */
+function avisoSinLeer_(mensaje, texto, contexto) {
   const fecha = Utilities.formatDate(mensaje.getDate(), AJUSTES.zonaHoraria, 'yyyy-MM-dd');
-  const idGasto = `correo-${mensaje.getId()}`;
-  const gastos = contexto.gastosDelMes(fecha.slice(0, 7));
-  if (gastos.some((g) => g.id === idGasto)) {
+  contexto.resumen.sinLeer += 1;
+  contexto.ultimoPendiente = `${fecha} · Sin leer: "${mensaje.getSubject()}" de ${String(mensaje.getFrom()).replace(/<.*>/, '').trim()}`;
+  Logger.log(`${fecha} · Parece una transferencia pero no se pudo leer: "${mensaje.getSubject()}" (${mensaje.getFrom()})`);
+  if (contexto.mostrarTextoSinLeer) {
+    Logger.log(`----- Texto del aviso -----\n${limpiarTexto_(texto).replace(/\n{3,}/g, '\n\n').slice(0, 2500)}\n----- Fin del aviso -----`);
+  }
+  return 'sin-leer';
+}
+
+/**
+ * Una compra con tarjeta. En este orden:
+ *   1. ¿Ya se anotó este correo? → nada.
+ *   2. ¿Es el cobro automático de un gasto fijo? → se marca el fijo pagado.
+ *   3. ¿Ya la anotaron a mano (mismo monto y misma tarjeta)? → se enlaza.
+ *   4. Si no, se anota como gasto (marcado "¿Repetido?" si se parece a otro).
+ */
+function revisarCargo_(mensaje, aviso, contexto) {
+  const { resumen } = contexto;
+  const idCorreo = mensaje.getId();
+  const fecha = Utilities.formatDate(mensaje.getDate(), AJUSTES.zonaHoraria, 'yyyy-MM-dd');
+  const mes = fecha.slice(0, 7);
+  const idGasto = `correo-${idCorreo}`;
+  const gastos = contexto.gastosDelMes(mes);
+  if (gastos.some((g) => g.id === idGasto || g.correoId === idCorreo)) {
     resumen.yaEstaban += 1;
     return 'ya-estaba';
   }
 
   const destino = destinoDelCargo(aviso, contexto.tarjetas, contexto.cuentas);
+  const monto = `$${aviso.monto.toFixed(2)}`;
+
+  // 2. Cobro automático de un gasto fijo.
+  const fijo = destino.id
+    ? buscarFijoDelCobro(contexto.fijos, contexto.pagadosDelMes(mes), {
+        monto: aviso.monto,
+        fecha,
+        medio: destino.medio,
+        texto: aviso.comercio,
+      })
+    : null;
+  if (fijo && (fijo.porNombre || !fijo.yaPagado)) {
+    const token = {
+      coleccion: 'gastos',
+      id: idGasto,
+      campos: { categoria: 'Gasto fijo', medio: destino.medio, nota: `${aviso.comercio} · ${fijo.fijo.nombre}` },
+    };
+    return anotarPagoFijo_(token, { fecha, mes, monto: aviso.monto, medio: destino.medio, fijo }, contexto);
+  }
+
+  // 3. Ya anotado a mano.
+  const igual = buscarGastoIgual(gastos, { monto: aviso.monto, fecha, medio: destino.medio });
+  if (igual) {
+    Logger.log(`${fecha} · ${monto} · ${aviso.comercio} · ya estaba anotado a mano: se enlaza`);
+    if (!contexto.guardar) return 'prueba';
+    confirmar_([escrituraActualizar_(`gastos/${igual.id}`, { correoId: idCorreo })], 'enlazar el gasto');
+    igual.correoId = idCorreo;
+    resumen.enlazados += 1;
+    return 'ya-estaba';
+  }
+
+  // 4. Gasto nuevo.
   const categoria = adivinarCategoria(aviso.comercio);
-  const parecido = buscarParecido(gastos, aviso.monto, fecha);
+  const parecido = (fijo && `pago:${fijo.clave}`) || buscarParecido(gastos, aviso.monto, fecha);
   const conQue = destino.id ? destino.nombre : `tarjeta ••${aviso.ultimos} (no registrada: se anota como efectivo)`;
-  Logger.log(
-    `${fecha} · $${aviso.monto.toFixed(2)} · ${aviso.comercio} · ${categoria} · ${conQue}${parecido ? ' · ¿repetido con uno anotado a mano?' : ''}`,
-  );
+  Logger.log(`${fecha} · ${monto} · ${aviso.comercio} · ${categoria} · ${conQue}${parecido ? ' · ¿repetido?' : ''}`);
   if (!contexto.guardar) return 'prueba';
 
-  if (guardarGasto_(mensaje.getId(), fecha, aviso, categoria, destino, parecido) === 'repetido') {
+  if (guardarGasto_(idCorreo, fecha, aviso, categoria, destino, parecido) === 'repetido') {
     resumen.yaEstaban += 1;
     return 'ya-estaba';
   }
-  gastos.push({ id: idGasto, monto: aviso.monto, fecha, origen: 'correo' });
+  gastos.push({ id: idGasto, monto: aviso.monto, fecha, origen: 'correo', medio: destino.medio });
   resumen.nuevos += 1;
-  if (parecido) resumen.posiblesRepetidos.push(`${fecha} · $${aviso.monto.toFixed(2)} · ${aviso.comercio}`);
+  if (parecido) resumen.posiblesRepetidos.push(`${fecha} · ${monto} · ${aviso.comercio}`);
   if (!destino.id) {
     resumen.sinTarjeta += 1;
     return 'sin-tarjeta';
@@ -714,8 +1094,59 @@ function revisarMensaje_(mensaje, contexto) {
 }
 
 /**
- * Anota una transferencia leída del correo, una sola vez aunque llegue el
- * aviso de los dos bancos (mismo número de referencia).
+ * Marca un gasto fijo como pagado por un cobro leído del correo. Si ya
+ * estaba marcado (a mano o por otro aviso), solo se recuerda el correo para
+ * no volver a leerlo. El correo se guarda como "token" (un gasto o
+ * movimiento descartado, que la app no muestra) para que nunca se anote dos
+ * veces, aunque después desmarquen el pago.
+ */
+function anotarPagoFijo_(token, cobro, contexto) {
+  const { resumen } = contexto;
+  const { fijo, fecha, mes, monto, medio } = cobro;
+  const pagados = contexto.pagadosDelMes(mes);
+  const yaPagado = Boolean(pagados[fijo.clave]);
+  Logger.log(
+    `${fecha} · $${monto.toFixed(2)} · cobro de "${fijo.fijo.nombre}" (gasto fijo): ${yaPagado ? 'ya estaba marcado como pagado' : 'se marca pagado en Pagos'}`,
+  );
+  if (!contexto.guardar) return 'prueba';
+
+  const camposDelToken = {
+    fecha: campo_(fecha),
+    mes: campo_(mes),
+    monto: { doubleValue: monto },
+    ...Object.keys(token.campos).reduce((a, k) => ({ ...a, [k]: campo_(token.campos[k]) }), {}),
+    autor: AUTOR_CORREO(),
+    origen: campo_('correo'),
+    descartado: campo_(true),
+    enlazadoA: campo_(`pago:${fijo.clave}`),
+  };
+  const escrituras = [escrituraCrear_(`${token.coleccion}/${token.id}`, camposDelToken)];
+  if (!yaPagado) {
+    const pago = { fecha, monto, medio, origen: 'correo' };
+    escrituras.push(escrituraPago_(mes, fijo.clave, pago), ...saldosDelMedio_(medio, monto, contexto));
+    pagados[fijo.clave] = pago;
+  }
+  if (confirmar_(escrituras, 'marcar el gasto fijo') === 'repetido') {
+    resumen.yaEstaban += 1;
+    return 'ya-estaba';
+  }
+  if (yaPagado) {
+    resumen.enlazados += 1;
+    return 'ya-estaba';
+  }
+  resumen.fijos += 1;
+  return 'guardado';
+}
+
+/**
+ * Una transferencia. En este orden:
+ *   1. ¿Ya se anotó este aviso (por su referencia o su correo)? → nada.
+ *   2. ¿Es el mismo envío avisado por el otro banco o anotado a mano? → se enlaza.
+ *   3. ¿Paga una tarjeta cuyo pago ya marcaron a mano en Pagos? → se enlaza con ese pago.
+ *   4. ¿Es el pago de un gasto fijo (sale de una cuenta hacia afuera)? → se marca el fijo.
+ *   5. Si no, se anota como movimiento nuevo.
+ * Además, si la versión anterior del lector había anotado este correo como una
+ * compra, esa compra se quita (y se devuelve su saldo).
  */
 function revisarMovimiento_(mensaje, movimiento, contexto) {
   const { resumen } = contexto;
@@ -724,11 +1155,15 @@ function revisarMovimiento_(mensaje, movimiento, contexto) {
     resumen.ignorados += 1;
     return 'ignorado';
   }
-  const fecha = movimiento.fecha || Utilities.formatDate(mensaje.getDate(), AJUSTES.zonaHoraria, 'yyyy-MM-dd');
+  const idCorreo = mensaje.getId();
+  const fechaDelCorreo = Utilities.formatDate(mensaje.getDate(), AJUSTES.zonaHoraria, 'yyyy-MM-dd');
+  const fecha = movimiento.fecha || fechaDelCorreo;
   const mes = fecha.slice(0, 7);
-  const id = idDeMovimiento(movimiento, mensaje.getId());
+  const clave = idDeMovimiento(movimiento, idCorreo);
   const movimientos = contexto.movimientosDelMes(mes);
-  if (movimientos.some((m) => m.id === id)) {
+  const limpieza = limpiarCompraFalsa_(idCorreo, fechaDelCorreo, contexto);
+  if (movimientos.some((m) => yaConoceElAviso(m, clave))) {
+    if (limpieza.length && contexto.guardar) confirmar_(limpieza, 'quitar la compra falsa');
     resumen.yaEstaban += 1;
     return 'ya-estaba';
   }
@@ -736,46 +1171,155 @@ function revisarMovimiento_(mensaje, movimiento, contexto) {
   const resuelto = resolverMovimiento(movimiento, contexto.cuentas, contexto.tarjetas);
   const monto = `$${movimiento.monto.toFixed(2)}`;
   if (!resuelto) {
-    Logger.log(
-      `${fecha} · ${monto} · transferencia de ${describirExtremo_(movimiento.desde)} a ${describirExtremo_(movimiento.hacia)}: ninguna de las dos cuentas está en la app, no se anota.`,
-    );
+    const texto = `${fecha} · ${monto} · de ${describirExtremo_(movimiento.desde)} a ${describirExtremo_(movimiento.hacia)}`;
+    Logger.log(`${texto}: ninguna de las dos cuentas está en la app, no se anota.`);
+    contexto.ultimoPendiente = `${texto} · ninguna cuenta está en la app`;
+    if (limpieza.length && contexto.guardar) confirmar_(limpieza, 'quitar la compra falsa');
     resumen.sinCuenta += 1;
-    return 'sin-tarjeta';
+    return 'sin-cuenta';
   }
-  const nuevo = { id, monto: movimiento.monto, fecha, desde: resuelto.desde, hacia: resuelto.hacia };
-  const parecido =
-    buscarMovimientoParecido(movimientos, nuevo) ||
-    pagoDeTarjetaParecido(contexto.pagadosDelMes(mes), resuelto.hacia, movimiento.monto);
-  Logger.log(
-    `${fecha} · ${monto} · ${resuelto.nombreDesde} → ${resuelto.nombreHacia}${parecido ? ' · ¿repetido con uno anotado a mano?' : ''}`,
-  );
-  if (!contexto.guardar) return 'prueba';
+  const ruta = `${resuelto.nombreDesde} → ${resuelto.nombreHacia}`;
+  const lado = ladoDelAviso(movimiento);
+  const nuevo = { id: clave, monto: movimiento.monto, fecha, desde: resuelto.desde, hacia: resuelto.hacia, lado };
 
-  if (guardarMovimiento_(id, fecha, movimiento, resuelto, parecido) === 'repetido') {
+  // 2. El mismo envío, avisado por el otro banco o anotado a mano.
+  const mismo = buscarMismoMovimiento(movimientos, nuevo);
+  if (mismo) {
+    Logger.log(`${fecha} · ${monto} · ${ruta} · ya estaba (${mismo.origen === 'correo' ? 'avisado por el otro banco' : 'anotado a mano'}): se enlaza`);
+    if (!contexto.guardar) return 'prueba';
+    confirmar_(
+      [escrituraActualizar_(`movimientos/${mismo.id}`, {}, { referencias: [clave], lados: [lado] }), ...limpieza],
+      'enlazar la transferencia',
+    );
+    mismo.referencias = [...(mismo.referencias || []), clave];
+    mismo.lados = [...(mismo.lados || []), lado];
+    resumen.enlazados += 1;
+    return 'ya-estaba';
+  }
+
+  const camposBase = {
+    fecha: campo_(fecha),
+    mes: campo_(mes),
+    monto: { doubleValue: movimiento.monto },
+    desde: campo_(resuelto.desde),
+    hacia: campo_(resuelto.hacia),
+    nota: campo_(notaDeMovimiento(movimiento, resuelto)),
+    autor: AUTOR_CORREO(),
+    origen: campo_('correo'),
+    lados: campo_([lado]),
+  };
+  if (movimiento.referencia) camposBase.referencia = campo_(movimiento.referencia);
+
+  // 3. El pago de tarjeta que ya marcaron a mano en Pagos.
+  const pagados = contexto.pagadosDelMes(mes);
+  const pagoManual = pagoDeTarjetaMarcado(pagados, resuelto.hacia, movimiento.monto);
+  if (pagoManual) {
+    // Si lo marcaron como pagado en efectivo pero salió de una cuenta, se corrige la cuenta.
+    const corregirCuenta = !String(pagoManual.pago.desde || '').startsWith('cuenta:') && resuelto.desde.startsWith('cuenta:');
+    Logger.log(
+      `${fecha} · ${monto} · ${ruta} · ya estaba marcado en Pagos: se enlaza${corregirCuenta ? ` y se resta de ${resuelto.nombreDesde}` : ''}`,
+    );
+    if (!contexto.guardar) return 'prueba';
+    const escrituras = [
+      escrituraCrear_(`movimientos/${clave}`, { ...camposBase, descartado: campo_(true), enlazadoA: campo_(`pago:${pagoManual.clave}`) }),
+      escrituraPago_(mes, pagoManual.clave, corregirCuenta ? { correo: clave, desde: resuelto.desde } : { correo: clave }, { soloEstosCampos: true }),
+      ...(corregirCuenta ? saldosDelMedio_(resuelto.desde, movimiento.monto, contexto) : []),
+      ...limpieza,
+    ];
+    if (confirmar_(escrituras, 'enlazar el pago de la tarjeta') === 'guardado') {
+      pagoManual.pago.correo = clave;
+      movimientos.push({ ...nuevo, descartado: true, lados: [lado] });
+    }
+    resumen.enlazados += 1;
+    return 'ya-estaba';
+  }
+
+  // 4. El pago de un gasto fijo hecho con una transferencia.
+  const fijo =
+    resuelto.hacia === 'externo' && resuelto.desde.startsWith('cuenta:')
+      ? buscarFijoDelCobro(contexto.fijos, pagados, {
+          monto: movimiento.monto,
+          fecha,
+          medio: resuelto.desde,
+          texto: [movimiento.concepto, movimiento.hacia.persona, resuelto.nombreHacia].join(' '),
+        })
+      : null;
+  if (fijo && (fijo.porNombre || !fijo.yaPagado)) {
+    const token = {
+      coleccion: 'movimientos',
+      id: clave,
+      campos: { desde: resuelto.desde, hacia: resuelto.hacia, nota: `${fijo.fijo.nombre} (gasto fijo)` },
+    };
+    const resultado = anotarPagoFijo_(token, { fecha, mes, monto: movimiento.monto, medio: resuelto.desde, fijo }, contexto);
+    if (limpieza.length && contexto.guardar) confirmar_(limpieza, 'quitar la compra falsa');
+    movimientos.push({ ...nuevo, descartado: true, lados: [lado] });
+    return resultado;
+  }
+
+  // 5. Movimiento nuevo.
+  const parecido = buscarMovimientoParecido(movimientos, nuevo);
+  Logger.log(`${fecha} · ${monto} · ${ruta}${parecido ? ' · ¿repetido?' : ''}`);
+  if (!contexto.guardar) return 'prueba';
+  const campos = { ...camposBase };
+  if (parecido) campos.posibleRepetido = campo_(parecido);
+  const saldos = [];
+  const [tipoDesde, idDesde] = resuelto.desde.split(':');
+  const [tipoHacia, idHacia] = resuelto.hacia.split(':');
+  if (tipoDesde === 'cuenta') saldos.push(escrituraSaldo_('cuentas', idDesde, -movimiento.monto));
+  if (tipoHacia === 'cuenta') saldos.push(escrituraSaldo_('cuentas', idHacia, movimiento.monto));
+  if (tipoHacia === 'tarjeta') saldos.push(escrituraSaldo_('tarjetas', idHacia, -movimiento.monto));
+  if (confirmar_([escrituraCrear_(`movimientos/${clave}`, campos), ...saldos, ...limpieza], 'guardar la transferencia') === 'repetido') {
     resumen.yaEstaban += 1;
     return 'ya-estaba';
   }
-  movimientos.push(nuevo);
+  movimientos.push({ ...nuevo, origen: 'correo', lados: [lado] });
   resumen.movimientos += 1;
-  if (parecido) resumen.posiblesRepetidos.push(`${fecha} · ${monto} · ${resuelto.nombreDesde} → ${resuelto.nombreHacia}`);
+  if (parecido) resumen.posiblesRepetidos.push(`${fecha} · ${monto} · ${ruta}`);
   return 'guardado';
+}
+
+/**
+ * La versión anterior del lector podía anotar un aviso de transferencia como
+ * si fuera una compra. Si este correo tiene esa compra, se descarta y se
+ * devuelve lo que había sumado a la tarjeta o restado de la cuenta.
+ * @returns {Object[]} Escrituras para agregar al guardado (vacío si no hay nada que limpiar).
+ */
+function limpiarCompraFalsa_(idCorreo, fechaDelCorreo, contexto) {
+  const gastos = contexto.gastosDelMes(fechaDelCorreo.slice(0, 7));
+  const falsa = gastos.find((g) => g.id === `correo-${idCorreo}` && !g.descartado && !g.enlazadoA);
+  if (!falsa) return [];
+  Logger.log(`Se quita la compra de $${Number(falsa.monto).toFixed(2)} que la versión anterior anotó por este aviso de transferencia.`);
+  falsa.descartado = true;
+  return [
+    escrituraActualizar_(`gastos/${falsa.id}`, { descartado: true, nota: 'Era una transferencia, no una compra' }),
+    ...saldosDelMedio_(falsa.medio, Number(falsa.monto), contexto, -1),
+  ];
 }
 
 function etiquetar_(hilo, resultados, contexto) {
   if (!contexto.etiquetas) return;
-  if (resultados.includes('sin-tarjeta')) hilo.addLabel(contexto.etiquetas.revisar);
-  else if (resultados.includes('guardado')) hilo.addLabel(contexto.etiquetas.registrado);
+  if (resultados.some((r) => r === 'sin-tarjeta' || r === 'sin-cuenta' || r === 'sin-leer')) {
+    hilo.addLabel(contexto.etiquetas.revisar);
+  } else if (resultados.includes('guardado')) {
+    hilo.addLabel(contexto.etiquetas.registrado);
+  }
 }
+
+/** Los avisos que no se pudieron anotar se vuelven a intentar en la siguiente revisión. */
+const SE_REINTENTA = ['sin-cuenta', 'sin-leer'];
 
 /** Revisión de rutina: avisos de los últimos días que todavía no se habían leído. */
 function revisarRecientes_(contexto) {
   const procesados = contexto.guardar ? leerProcesados_() : new Set();
+  const desde = Date.now() - AJUSTES.diasRecientes * 86400000;
   GmailApp.search(`newer_than:${AJUSTES.diasRecientes}d ${AJUSTES.filtro}`, 0, 50).forEach((hilo) => {
     const resultados = [];
     hilo.getMessages().forEach((mensaje) => {
-      if (procesados.has(mensaje.getId())) return;
-      resultados.push(revisarMensaje_(mensaje, contexto));
-      procesados.add(mensaje.getId());
+      // Los hilos juntan avisos viejos con el mismo asunto: solo se miran los recientes.
+      if (mensaje.getDate().getTime() < desde || procesados.has(mensaje.getId())) return;
+      const resultado = revisarMensaje_(mensaje, contexto);
+      resultados.push(resultado);
+      if (!SE_REINTENTA.includes(resultado)) procesados.add(mensaje.getId());
     });
     etiquetar_(hilo, resultados, contexto);
   });
@@ -785,12 +1329,13 @@ function revisarRecientes_(contexto) {
 
 /**
  * Revisa todos los avisos de un mes, aunque ya se hubieran leído antes: así
- * aparecen los que se fueron de paso. Los que ya están anotados no se repiten.
+ * aparecen los que se fueron de paso. Lo que ya está anotado no se repite.
  */
 function revisarMes_(mes, contexto) {
   const { inicio, fin } = limitesDelMes(mes, AJUSTES.desfaseUtc);
   const consulta = `${AJUSTES.filtro} after:${inicio} before:${fin}`;
   const procesados = contexto.guardar ? leerProcesados_() : new Set();
+  const vistos = new Set();
   const porPagina = 100;
   let desde = 0;
   let revisados = 0;
@@ -802,10 +1347,13 @@ function revisarMes_(mes, contexto) {
       const resultados = [];
       hilo.getMessages().forEach((mensaje) => {
         const segundos = mensaje.getDate().getTime() / 1000;
-        if (segundos < inicio || segundos >= fin || revisados >= AJUSTES.maximoCorreosPorMes) return;
+        if (segundos < inicio || segundos >= fin || vistos.has(mensaje.getId())) return;
+        if (revisados >= AJUSTES.maximoCorreosPorMes) return;
+        vistos.add(mensaje.getId());
         revisados += 1;
-        resultados.push(revisarMensaje_(mensaje, contexto));
-        procesados.add(mensaje.getId());
+        const resultado = revisarMensaje_(mensaje, contexto);
+        resultados.push(resultado);
+        if (!SE_REINTENTA.includes(resultado)) procesados.add(mensaje.getId());
       });
       etiquetar_(hilo, resultados, contexto);
     });
@@ -823,12 +1371,12 @@ function revisarMes_(mes, contexto) {
 /** Atiende el pedido hecho desde la app y deja el resultado para que la app lo muestre. */
 function atenderSolicitud_(solicitud, contexto) {
   const base = { mes: solicitud.mes, solicitud: solicitud.id };
-  escribirEstadoCuenta_(contexto.cuenta, { ...base, estado: 'revisando' });
+  escribirEstadoCuenta_(contexto, { ...base, estado: 'revisando' });
   try {
     revisarMes_(solicitud.mes, contexto);
-    escribirEstadoCuenta_(contexto.cuenta, resumenParaGuardar_(contexto.resumen, { ...base, estado: 'listo' }));
+    escribirEstadoCuenta_(contexto, resumenParaGuardar_(contexto.resumen, { ...base, estado: 'listo' }));
   } catch (error) {
-    escribirEstadoCuenta_(contexto.cuenta, { ...base, estado: 'error', mensaje: String(error.message || error).slice(0, 300) });
+    escribirEstadoCuenta_(contexto, { ...base, estado: 'error', mensaje: String(error.message || error).slice(0, 300) });
     throw error;
   }
 }
@@ -838,10 +1386,13 @@ function resumenParaGuardar_(resumen, extra) {
     ...extra,
     nuevos: resumen.nuevos,
     movimientos: resumen.movimientos,
+    fijos: resumen.fijos,
+    enlazados: resumen.enlazados,
     yaEstaban: resumen.yaEstaban,
     ignorados: resumen.ignorados,
     sinTarjeta: resumen.sinTarjeta,
     sinCuenta: resumen.sinCuenta,
+    sinLeer: resumen.sinLeer,
     correosRevisados: resumen.correosRevisados,
     posiblesRepetidos: resumen.posiblesRepetidos.slice(0, 20),
     mensaje: '',
@@ -850,14 +1401,13 @@ function resumenParaGuardar_(resumen, extra) {
 
 function registrarResumen_(contexto) {
   const r = contexto.resumen;
-  if (!contexto.guardar) return;
   Logger.log(
-    `Correos revisados: ${r.correosRevisados} · gastos nuevos: ${r.nuevos} · movimientos nuevos: ${r.movimientos} · ya estaban: ${r.yaEstaban} · ignorados: ${r.ignorados} · con tarjeta no registrada: ${r.sinTarjeta} · transferencias sin cuenta registrada: ${r.sinCuenta} · posibles repetidos: ${r.posiblesRepetidos.length}`,
+    `Correos revisados: ${r.correosRevisados} · gastos nuevos: ${r.nuevos} · transferencias nuevas: ${r.movimientos} · gastos fijos marcados: ${r.fijos} · enlazados con lo anotado a mano o con el otro banco: ${r.enlazados} · ya estaban: ${r.yaEstaban} · ignorados: ${r.ignorados} · con tarjeta no registrada: ${r.sinTarjeta} · transferencias sin cuenta en la app: ${r.sinCuenta} · sin leer: ${r.sinLeer} · posibles repetidos: ${r.posiblesRepetidos.length}`,
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Gmail                                                               */
+/* Gmail y memoria del script                                          */
 /* ------------------------------------------------------------------ */
 
 function obtenerEtiqueta_(nombre) {
@@ -878,6 +1428,37 @@ function leerProcesados_() {
 function guardarProcesados_(procesados) {
   const lista = Array.from(procesados).slice(-MAXIMO_PROCESADOS);
   PropertiesService.getUserProperties().setProperty(CLAVE_PROCESADOS, JSON.stringify(lista));
+}
+
+/**
+ * Avisos que no se pudieron anotar (sin leer o de cuentas que no están en la
+ * app): { idDelCorreo: { fecha, texto } }. Se muestran en la app hasta que
+ * se anoten o pasen 45 días.
+ */
+const CLAVE_PENDIENTES = 'avisosPendientes';
+
+function leerPendientes_() {
+  try {
+    return JSON.parse(PropertiesService.getUserProperties().getProperty(CLAVE_PENDIENTES) || '{}');
+  } catch (error) {
+    return {};
+  }
+}
+
+/** Los pendientes más nuevos primero, sin los de hace más de 45 días; los guarda y los devuelve como texto. */
+function guardarPendientes_(pendientes) {
+  const limite = Utilities.formatDate(new Date(Date.now() - 45 * 86400000), AJUSTES.zonaHoraria, 'yyyy-MM-dd');
+  const vigentes = Object.keys(pendientes)
+    .map((id) => ({ id, ...pendientes[id] }))
+    .filter((p) => p.fecha >= limite)
+    .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
+    .slice(0, 30);
+  const guardar = {};
+  vigentes.forEach((p) => {
+    guardar[p.id] = { fecha: p.fecha, texto: p.texto };
+  });
+  PropertiesService.getUserProperties().setProperty(CLAVE_PENDIENTES, JSON.stringify(guardar));
+  return vigentes.map((p) => p.texto);
 }
 
 /* ------------------------------------------------------------------ */
@@ -924,6 +1505,7 @@ function valor_(campo) {
     });
     return objeto;
   }
+  if ('arrayValue' in campo) return (campo.arrayValue.values || []).map(valor_);
   if ('stringValue' in campo) return campo.stringValue;
   if ('doubleValue' in campo) return Number(campo.doubleValue);
   if ('integerValue' in campo) return Number(campo.integerValue);
@@ -933,11 +1515,18 @@ function valor_(campo) {
   return undefined;
 }
 
-/** Valor de JavaScript → campo de la API REST (textos, números y listas de textos). */
+/** Valor de JavaScript → campo de la API REST (textos, números, listas y objetos simples). */
 function campo_(valor) {
   if (Array.isArray(valor)) return { arrayValue: { values: valor.map(campo_) } };
   if (typeof valor === 'number') return { doubleValue: valor };
   if (typeof valor === 'boolean') return { booleanValue: valor };
+  if (valor && typeof valor === 'object') {
+    const fields = {};
+    Object.keys(valor).forEach((clave) => {
+      fields[clave] = campo_(valor[clave]);
+    });
+    return { mapValue: { fields } };
+  }
   return { stringValue: String(valor) };
 }
 
@@ -974,6 +1563,18 @@ function leerCuentas_() {
   });
 }
 
+/** Gastos fijos de la app: [{id, nombre, monto, dia, medio, comercio}]. */
+function leerFijos_() {
+  return leerColeccion_('fijos', 'leer los gastos fijos').map(({ id, campos }) => ({
+    id,
+    nombre: valor_(campos.nombre) || '',
+    monto: Number(valor_(campos.monto)) || 0,
+    dia: Number(valor_(campos.dia)) || 0,
+    medio: valor_(campos.medio) || 'efectivo',
+    comercio: valor_(campos.comercio) || '',
+  }));
+}
+
 /** Documentos de una colección que tienen `mes` igual al pedido. */
 function leerDelMes_(coleccion, mes, accion) {
   const r = pedirFirestore_('post', `${rutaDocumento_(`hogares/${AJUSTES.hogar}`)}:runQuery`, {
@@ -988,18 +1589,21 @@ function leerDelMes_(coleccion, mes, accion) {
     .map(({ document }) => ({ id: document.name.split('/').pop(), campos: document.fields || {} }));
 }
 
-/** Gastos ya guardados de un mes, para no repetir y para detectar los anotados a mano. */
+/** Gastos ya guardados de un mes, para no repetir y para enlazar con los anotados a mano. */
 function leerGastosDelMes_(mes) {
   return leerDelMes_('gastos', mes, 'leer los gastos del mes').map(({ id, campos: c }) => ({
     id,
     monto: valor_(c.monto),
     fecha: valor_(c.fecha),
+    medio: valor_(c.medio) || 'efectivo',
     origen: valor_(c.origen),
+    correoId: valor_(c.correoId),
+    enlazadoA: valor_(c.enlazadoA),
     descartado: valor_(c.descartado) === true,
   }));
 }
 
-/** Movimientos ya guardados de un mes (transferencias), para no repetir. */
+/** Movimientos ya guardados de un mes, para no repetir y para enlazar los avisos del otro banco. */
 function leerMovimientosDelMes_(mes) {
   return leerDelMes_('movimientos', mes, 'leer los movimientos del mes').map(({ id, campos: c }) => ({
     id,
@@ -1008,19 +1612,25 @@ function leerMovimientosDelMes_(mes) {
     desde: valor_(c.desde),
     hacia: valor_(c.hacia),
     origen: valor_(c.origen),
+    referencias: valor_(c.referencias) || [],
+    lados: valor_(c.lados) || [],
     descartado: valor_(c.descartado) === true,
   }));
 }
 
-/** Pagos marcados a mano en el mes: { 'tarjeta_<id>': {monto, …} }. */
+/** Pagos marcados del mes: { 'tarjeta_<id>': {monto, …}, 'fijo_<id>': {…} }. */
 function leerPagadosDelMes_(mes) {
   const r = pedirFirestore_('get', rutaHogar_(`meses/${mes}`));
   if (r.codigo === 404) return {};
   if (r.codigo !== 200) throw errorDeFirestore_('leer los pagos del mes', r);
-  return valor_((r.datos.fields || {}).pagados) || {};
+  const pagados = valor_((r.datos.fields || {}).pagados) || {};
+  // Un pago desmarcado puede quedar como null.
+  Object.keys(pagados).forEach((clave) => {
+    if (!pagados[clave]) delete pagados[clave];
+  });
+  return pagados;
 }
 
-/** El pedido hecho desde la app ("Buscar gastos del mes en los correos"), o null. */
 function leerSolicitud_() {
   const r = pedirFirestore_('get', rutaHogar_('lectorCorreo/solicitud'));
   if (r.codigo === 404) return null;
@@ -1033,29 +1643,42 @@ function leerSolicitud_() {
 
 /**
  * Deja en Firestore el estado de esta cuenta para que la app lo muestre:
- * cuándo revisó por última vez y el resultado del último pedido.
+ * cuándo revisó por última vez, el resultado del último pedido y los avisos
+ * que no se pudieron anotar.
  */
-function escribirEstadoCuenta_(cuenta, datos) {
-  const campos = { cuenta: campo_(cuenta) };
+function escribirEstadoCuenta_(contexto, datos) {
+  if (!contexto.guardar) return;
+  const campos = { cuenta: campo_(contexto.cuenta), avisosPendientes: campo_(guardarPendientes_(contexto.pendientes)) };
   Object.keys(datos).forEach((clave) => {
     campos[clave] = campo_(datos[clave]);
   });
-  const r = pedirFirestore_('post', `${BASE_DOCUMENTOS()}:commit`, {
-    writes: [
+  confirmar_(
+    [
       {
-        update: { name: rutaHogar_(`lectorCorreo/cuenta-${claveDeCuenta(cuenta)}`), fields: campos },
+        update: { name: rutaHogar_(`lectorCorreo/cuenta-${claveDeCuenta(contexto.cuenta)}`), fields: campos },
         updateMask: { fieldPaths: Object.keys(campos) },
         updateTransforms: [{ fieldPath: 'ultimaRevision', setToServerValue: 'REQUEST_TIME' }],
       },
     ],
-  });
-  if (r.codigo !== 200) throw errorDeFirestore_('guardar el estado de la revisión', r);
+    'guardar el estado de la revisión',
+  );
 }
+
+/* ---------- Escrituras ---------- */
 
 const AUTOR_CORREO = () => ({ mapValue: { fields: { uid: campo_('correo'), nombre: campo_('Correo del banco') } } });
 
-/** Escritura que suma (o resta) al saldo de una cuenta o tarjeta. */
-function cambioDeSaldo_(coleccion, id, delta) {
+/** Crear un documento solo si no existe (así un aviso nunca se anota dos veces). */
+function escrituraCrear_(ruta, campos) {
+  return {
+    update: { name: rutaHogar_(ruta), fields: campos },
+    currentDocument: { exists: false },
+    updateTransforms: [{ fieldPath: 'creadoEn', setToServerValue: 'REQUEST_TIME' }],
+  };
+}
+
+/** Sumar (o restar) al saldo de una cuenta o tarjeta. */
+function escrituraSaldo_(coleccion, id, delta) {
   return {
     transform: {
       document: rutaHogar_(`${coleccion}/${id}`),
@@ -1065,23 +1688,50 @@ function cambioDeSaldo_(coleccion, id, delta) {
 }
 
 /**
- * Crea un documento solo si no existe, junto con los cambios de saldo, en un
- * solo paso: si ya existía, no se escribe nada (ni se repiten los saldos).
- * @returns {'guardado'|'repetido'}
+ * Cambiar algunos campos de un documento que existe y, si se pide, agregar
+ * valores a listas sin repetirlos (por ejemplo, las referencias de los avisos).
  */
-function crearSiNoExiste_(ruta, campos, cambiosDeSaldo, accion) {
-  const escrituras = [
-    {
-      update: { name: rutaHogar_(ruta), fields: campos },
-      currentDocument: { exists: false },
-      updateTransforms: [{ fieldPath: 'creadoEn', setToServerValue: 'REQUEST_TIME' }],
-    },
-    ...cambiosDeSaldo,
-  ];
+function escrituraActualizar_(ruta, campos, agregarALista) {
+  const transformaciones = Object.keys(agregarALista || {}).map((campo) => ({
+    fieldPath: campo,
+    appendMissingElements: { values: agregarALista[campo].map(campo_) },
+  }));
+  const nombres = Object.keys(campos);
+  if (!nombres.length) {
+    return { transform: { document: rutaHogar_(ruta), fieldTransforms: transformaciones }, currentDocument: { exists: true } };
+  }
+  const fields = {};
+  nombres.forEach((clave) => {
+    fields[clave] = campo_(campos[clave]);
+  });
+  const escritura = { update: { name: rutaHogar_(ruta), fields }, updateMask: { fieldPaths: nombres }, currentDocument: { exists: true } };
+  if (transformaciones.length) escritura.updateTransforms = transformaciones;
+  return escritura;
+}
+
+/**
+ * Marcar un pago del mes en meses/{mes}.pagados. Con `soloEstosCampos`, cambia
+ * solo esos campos de un pago que ya estaba marcado (sin borrar los demás).
+ */
+function escrituraPago_(mes, clave, detalle, { soloEstosCampos = false } = {}) {
+  const mascara = soloEstosCampos
+    ? Object.keys(detalle).map((campo) => `pagados.${clave}.${campo}`)
+    : [`pagados.${clave}`];
+  return {
+    update: { name: rutaHogar_(`meses/${mes}`), fields: { pagados: campo_({ [clave]: detalle }) } },
+    updateMask: { fieldPaths: mascara },
+  };
+}
+
+/**
+ * Escribe todo junto en un solo paso (si una parte falla, no se escribe nada).
+ * @returns {'guardado'|'repetido'}  'repetido' si el documento a crear ya existía.
+ */
+function confirmar_(escrituras, accion) {
   const r = pedirFirestore_('post', `${BASE_DOCUMENTOS()}:commit`, { writes: escrituras });
   if (r.codigo === 200) return 'guardado';
   const estado = r.datos.error ? r.datos.error.status : '';
-  if (estado === 'ALREADY_EXISTS' || estado === 'FAILED_PRECONDITION') return 'repetido';
+  if (estado === 'ALREADY_EXISTS' || estado === 'FAILED_PRECONDITION' || estado === 'NOT_FOUND') return 'repetido';
   throw errorDeFirestore_(accion, r);
 }
 
@@ -1090,7 +1740,7 @@ function crearSiNoExiste_(ruta, campos, cambiosDeSaldo, accion) {
  * si fue con débito). El id del gasto sale del id del correo, así un correo
  * nunca se anota dos veces.
  * @param {ReturnType<typeof destinoDelCargo>} destino
- * @param {string|null} parecido  Id de un gasto anotado a mano que parece el mismo.
+ * @param {string|null} parecido  Id de un gasto anotado a mano que parece el mismo, o "pago:fijo_<id>".
  */
 function guardarGasto_(idCorreo, fecha, aviso, categoria, destino, parecido) {
   const campos = {
@@ -1104,34 +1754,6 @@ function guardarGasto_(idCorreo, fecha, aviso, categoria, destino, parecido) {
     origen: campo_('correo'),
   };
   if (parecido) campos.posibleRepetido = campo_(parecido);
-  const saldos = destino.id ? [cambioDeSaldo_(destino.coleccion, destino.id, destino.delta)] : [];
-  return crearSiNoExiste_(`gastos/correo-${idCorreo}`, campos, saldos, 'guardar el gasto');
-}
-
-/**
- * Guarda una transferencia y ajusta los saldos: baja la cuenta de donde
- * salió, sube la cuenta a donde llegó o baja la deuda de la tarjeta pagada.
- * @param {ReturnType<typeof resolverMovimiento>} resuelto
- */
-function guardarMovimiento_(id, fecha, movimiento, resuelto, parecido) {
-  const campos = {
-    fecha: campo_(fecha),
-    mes: campo_(fecha.slice(0, 7)),
-    monto: { doubleValue: movimiento.monto },
-    desde: campo_(resuelto.desde),
-    hacia: campo_(resuelto.hacia),
-    nota: campo_(notaDeMovimiento(movimiento, resuelto)),
-    autor: AUTOR_CORREO(),
-    origen: campo_('correo'),
-  };
-  if (movimiento.referencia) campos.referencia = campo_(movimiento.referencia);
-  if (parecido) campos.posibleRepetido = campo_(parecido);
-
-  const saldos = [];
-  const [tipoDesde, idDesde] = resuelto.desde.split(':');
-  const [tipoHacia, idHacia] = resuelto.hacia.split(':');
-  if (tipoDesde === 'cuenta') saldos.push(cambioDeSaldo_('cuentas', idDesde, -movimiento.monto));
-  if (tipoHacia === 'cuenta') saldos.push(cambioDeSaldo_('cuentas', idHacia, movimiento.monto));
-  if (tipoHacia === 'tarjeta') saldos.push(cambioDeSaldo_('tarjetas', idHacia, -movimiento.monto));
-  return crearSiNoExiste_(`movimientos/${id}`, campos, saldos, 'guardar la transferencia');
+  const saldos = destino.id ? [escrituraSaldo_(destino.coleccion, destino.id, destino.delta)] : [];
+  return confirmar_([escrituraCrear_(`gastos/correo-${idCorreo}`, campos), ...saldos], 'guardar el gasto');
 }

@@ -40,6 +40,8 @@ export function milisegundos(valor) {
  * @property {number|null} minutos  Minutos desde su última revisión.
  * @property {boolean} apagado  Si hace mucho que no revisa.
  * @property {Object|null} resultado  Conteos del pedido, si ya terminó.
+ * @property {string[]} pendientes  Avisos que no se pudieron anotar (sin leer o
+ *   de cuentas que no están en la app), aunque no haya un pedido.
  */
 
 /**
@@ -68,14 +70,18 @@ export function estadoDelLector(lector, mes, ahora) {
         ? {
             nuevos: Number(c.nuevos) || 0,
             movimientos: Number(c.movimientos) || 0,
+            fijos: Number(c.fijos) || 0,
+            enlazados: Number(c.enlazados) || 0,
             yaEstaban: Number(c.yaEstaban) || 0,
             sinTarjeta: Number(c.sinTarjeta) || 0,
             sinCuenta: Number(c.sinCuenta) || 0,
+            sinLeer: Number(c.sinLeer) || 0,
             correosRevisados: Number(c.correosRevisados) || 0,
             posiblesRepetidos: Array.isArray(c.posiblesRepetidos) ? c.posiblesRepetidos : [],
             mensaje: c.mensaje || '',
           }
         : null,
+      pendientes: Array.isArray(c.avisosPendientes) ? c.avisosPendientes.filter((t) => typeof t === 'string') : [],
     };
   });
   const ocupado = cuentas.some(

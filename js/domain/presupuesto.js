@@ -209,7 +209,8 @@ function medioDelPago(detalle) {
  * @property {number} [numeroCuota]  Plazos: número de la cuota de este mes.
  * @property {boolean} [porPlanilla]  Plazos descontados del salario.
  * @property {string|null} [medio]  Plazos pagados: "efectivo", "planilla", "tarjeta:<id>" o "cuenta:<id>".
- * @property {string|null} [medio]  Fijos pagados: "efectivo" o "cuenta:<id>".
+ * @property {string|null} [medio]  Fijos pagados: "efectivo", "cuenta:<id>" o "tarjeta:<id>".
+ * @property {boolean} [delCorreo]  Fijos: lo marcó el lector al ver el cobro automático en el correo.
  * @property {number|null} [minimo]  Tarjetas: pago mínimo.
  * @property {string|null} [tipoDePago]  Tarjetas pagadas: 'contado', 'minimo' u 'otro'.
  * @property {string|null} [desde]  Tarjetas pagadas: "cuenta:<id>" o "efectivo".
@@ -239,6 +240,7 @@ export function pagosDelMes(datos, mes, hoy) {
         monto: redondear(aNumero(registrado?.monto ?? fijo.monto)),
         dia: fijo.dia,
         medio: registrado ? (registrado.medio ?? null) : null,
+        delCorreo: registrado?.origen === 'correo',
       });
     });
 
@@ -410,7 +412,8 @@ function planDeFijo(datos, clave, id, existente, fecha) {
     return plan;
   }
   const monto = redondear(aNumero(fijo.monto));
-  const medio = idDeCuenta(fijo.medio) ? fijo.medio : MEDIO_EFECTIVO;
+  // Desde una cuenta (baja su saldo), con tarjeta (sube su deuda) o en efectivo.
+  const medio = idDeCuenta(fijo.medio) || idDeTarjeta(fijo.medio) ? fijo.medio : MEDIO_EFECTIVO;
   plan.pagados[clave] = { fecha, monto, medio };
   aplicarMedio(plan, datos, medio, monto);
   plan.montoPagado = monto;
@@ -494,7 +497,8 @@ function planDeTarjeta(datos, clave, id, existente, fecha, detalle) {
  * Calcula qué cambia al marcar o desmarcar un pago, sin escribir nada.
  * El repositorio aplica el plan en una sola escritura.
  *
- * - Gasto fijo: se marca; si se paga desde una cuenta, baja su saldo.
+ * - Gasto fijo: se marca; si se paga desde una cuenta, baja su saldo, y si
+ *   se carga a una tarjeta, sube la deuda de la tarjeta.
  * - Cuota: suma lo pagado (`abonado`), que puede ser más que la cuota. Si
  *   se pagó con tarjeta, ese monto pasa al saldo de la tarjeta; si fue con
  *   débito, sale del saldo de la cuenta.

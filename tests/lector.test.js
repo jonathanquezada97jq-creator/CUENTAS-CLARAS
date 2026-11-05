@@ -56,3 +56,12 @@ test('ayudantes', () => {
   assert.equal(milisegundos('2026-11-03T00:00:00Z'), Date.parse('2026-11-03T00:00:00Z'));
   assert.equal(milisegundos(null), null);
 });
+
+test('los avisos que no se pudieron anotar se muestran aunque no haya pedido', () => {
+  const lector = {
+    solicitud: null,
+    cuentas: [{ cuenta: 'ana@gmail.com', ultimaRevision: new Date(AHORA - 60000).toISOString(), avisosPendientes: ['2026-11-04 · Sin leer: "Transferencia" de BAC', 7] }],
+  };
+  const r = estadoDelLector(lector, '2026-11', AHORA);
+  assert.deepEqual(r.cuentas[0].pendientes, ['2026-11-04 · Sin leer: "Transferencia" de BAC']);
+});

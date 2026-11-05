@@ -348,8 +348,9 @@ export function editarGasto(original, cambios) {
 /** Borra un gasto y deshace lo que sumó a la tarjeta o restó de la cuenta. */
 export function borrarGasto(gasto) {
   const lote = writeBatch(db);
-  if (gasto.origen === 'correo') {
-    // Se marca en lugar de borrarlo, para que el lector de correos no lo vuelva a anotar.
+  if (gasto.origen === 'correo' || gasto.correoId) {
+    // Vino del correo (o se enlazó con un aviso): se marca en lugar de borrarlo,
+    // para que el lector de correos no lo vuelva a anotar.
     lote.update(refDocumento('gastos', gasto.id), { descartado: true, actualizado: serverTimestamp() });
   } else {
     lote.delete(refDocumento('gastos', gasto.id));
@@ -396,7 +397,7 @@ export function guardarMovimiento(valores, original) {
 /** Borra un movimiento y deshace sus efectos en los saldos. */
 export function borrarMovimiento(movimiento) {
   const lote = writeBatch(db);
-  if (movimiento.origen === 'correo') {
+  if (movimiento.origen === 'correo' || movimiento.referencias?.length) {
     // Igual que los gastos: se marca para que el lector no lo vuelva a anotar.
     lote.update(refDocumento('movimientos', movimiento.id), { descartado: true, actualizado: serverTimestamp() });
   } else {

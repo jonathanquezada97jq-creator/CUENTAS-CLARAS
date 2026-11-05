@@ -22,8 +22,14 @@ const FUNCIONES = [
   'notaDeMovimiento',
   'idDeMovimiento',
   'buscarMovimientoParecido',
-  'pagoDeTarjetaParecido',
+  'buscarMismoMovimiento',
+  'pagoDeTarjetaMarcado',
   'destinoDelCargo',
+  'buscarGastoIgual',
+  'buscarFijoDelCobro',
+  'palabrasDelFijo',
+  'pareceTransferenciaSinLeer',
+  'huella',
 ];
 const {
   leerAviso,
@@ -38,8 +44,14 @@ const {
   notaDeMovimiento,
   idDeMovimiento,
   buscarMovimientoParecido,
-  pagoDeTarjetaParecido,
+  buscarMismoMovimiento,
+  pagoDeTarjetaMarcado,
   destinoDelCargo,
+  buscarGastoIgual,
+  buscarFijoDelCobro,
+  palabrasDelFijo,
+  pareceTransferenciaSinLeer,
+  huella,
 } = vm.runInNewContext(`${codigo}\n;({ ${FUNCIONES.join(', ')} })`, {});
 
 /** Objeto creado dentro de vm → objeto normal, para comparar con deepEqual. */
@@ -350,11 +362,13 @@ test('movimiento parecido: mismo monto, ±1 día y una cuenta en común', () => 
   assert.equal(buscarMovimientoParecido(movimientos, { ...nuevo, hacia: 'externo', desde: 'externo' }), null);
 });
 
-test('pago de tarjeta ya marcado a mano en Pagos', () => {
+test('pago de tarjeta ya marcado a mano en Pagos: se enlaza una sola vez', () => {
   const pagados = { tarjeta_atl: { monto: 0.55, tipo: 'otro' } };
-  assert.equal(pagoDeTarjetaParecido(pagados, 'tarjeta:atl', 0.55), 'pago:tarjeta_atl');
-  assert.equal(pagoDeTarjetaParecido(pagados, 'tarjeta:atl', 10), null);
-  assert.equal(pagoDeTarjetaParecido(pagados, 'cuenta:cusca', 0.55), null);
+  assert.equal(pagoDeTarjetaMarcado(pagados, 'tarjeta:atl', 0.55).clave, 'tarjeta_atl');
+  assert.equal(pagoDeTarjetaMarcado(pagados, 'tarjeta:atl', 10), null);
+  assert.equal(pagoDeTarjetaMarcado(pagados, 'cuenta:cusca', 0.55), null);
+  // Ya enlazado con otro aviso: el siguiente aviso no se enlaza con el mismo pago.
+  assert.equal(pagoDeTarjetaMarcado({ tarjeta_atl: { monto: 0.55, correo: 'ref-X' } }, 'tarjeta:atl', 0.55), null);
 });
 
 test('compra con la tarjeta de débito: se resta de la cuenta', () => {
@@ -379,4 +393,194 @@ Hacé tus transferencias y pagos desde la Banca en Línea.`;
   const aviso = leerAviso(texto);
   assert.equal(aviso.tipo, 'cargo');
   assert.equal(aviso.monto, 45.3);
+});
+
+/* ------------------------------------------------------------------ */
+/* Más formatos de transferencias                                      */
+/* ------------------------------------------------------------------ */
+
+test('transferencia contada en una oración, a una cuenta de otro banco', () => {
+  const texto = `Transferencia realizada
+Estimado cliente, transferiste $50.00 desde tu cuenta de ahorro ****1421 a la cuenta ****5555 de Banco Agrícola.
+Número de comprobante: 99887766`;
+  const m = copia(leerMovimiento(texto, REMITENTE_CUSCATLAN));
+  assert.equal(m.monto, 50);
+  assert.equal(m.entrada, false);
+  assert.equal(m.referencia, '99887766');
+  assert.deepEqual(m.desde, { banco: 'cuscatlan', ultimos: '1421', esTarjeta: false, persona: '' });
+  assert.deepEqual(m.hacia, { banco: 'agricola', ultimos: '5555', esTarjeta: false, persona: '' });
+});
+
+test('dinero recibido contado en una oración, con la cuenta de origen', () => {
+  const texto = `Te informamos que recibiste una transferencia de $100.00 en tu cuenta ****8320 desde la cuenta ****1421 de Banco Cuscatlán.`;
+  const m = copia(leerMovimiento(texto, REMITENTE_BAC));
+  assert.equal(m.monto, 100);
+  assert.equal(m.entrada, true);
+  assert.equal(m.desde.ultimos, '1421');
+  assert.equal(m.desde.banco, 'cuscatlan');
+  assert.equal(m.hacia.ultimos, '8320');
+  assert.equal(m.hacia.banco, 'bac');
+  assert.deepEqual(copia(resolverMovimiento(leerMovimiento(texto, REMITENTE_BAC), CUENTAS, TARJETAS)).desde, 'cuenta:cusca');
+});
+
+test('etiquetas "Cuenta débito", "Cuenta crédito" y "Monto de la transacción"', () => {
+  const texto = `Transferencia entre cuentas propias
+Cuenta débito: ***8320
+Cuenta crédito: ***1421
+Monto de la transacción: USD 25.00
+Comisión: USD 0.00
+Fecha: 04/11/2026
+Número de referencia: TR-55667788`;
+  const m = copia(leerMovimiento(texto, REMITENTE_BAC));
+  assert.equal(m.monto, 25);
+  assert.equal(m.fecha, '2026-11-04');
+  assert.equal(m.referencia, 'TR-55667788');
+  assert.equal(m.desde.ultimos, '8320');
+  assert.equal(m.hacia.ultimos, '1421');
+  const r = copia(resolverMovimiento(leerMovimiento(texto, REMITENTE_BAC), CUENTAS, TARJETAS));
+  assert.equal(r.desde, 'cuenta:bac');
+  assert.equal(r.hacia, 'cuenta:cusca');
+});
+
+test('cuentas con solo 3 dígitos visibles', () => {
+  const texto = `Transferencia exitosa\nCuenta origen: ****421\nCuenta destino: ****320\nMonto: $10.00`;
+  const r = copia(resolverMovimiento(leerMovimiento(texto, REMITENTE_CUSCATLAN), CUENTAS, TARJETAS));
+  assert.equal(r.desde, 'cuenta:cusca');
+  assert.equal(r.hacia, 'cuenta:bac');
+});
+
+test('pago de tarjeta desde una cuenta sí; el "recibimos su pago" del banco de la tarjeta no', () => {
+  const desdeCuenta = `Pago de tarjeta de crédito
+Le informamos que se realizó el pago a su tarjeta terminada en 4200 desde su cuenta ****1421.
+Monto: $150.00`;
+  const m = copia(leerMovimiento(desdeCuenta, REMITENTE_CUSCATLAN));
+  assert.equal(m.monto, 150);
+  assert.equal(m.desde.ultimos, '1421');
+  assert.equal(m.hacia.ultimos, '4200');
+  assert.equal(m.hacia.esTarjeta, true);
+  const r = copia(resolverMovimiento(leerMovimiento(desdeCuenta, REMITENTE_CUSCATLAN), CUENTAS, TARJETAS));
+  assert.equal(r.hacia, 'tarjeta:atl');
+
+  const delEmisor = 'Hemos recibido su pago de $150.00 a su tarjeta terminada en 4200. Gracias.';
+  assert.equal(leerMovimiento(delEmisor, 'avisos@bancoatlantida.com.sv'), null);
+  assert.equal(leerAviso(delEmisor).tipo, 'ignorar');
+});
+
+test('si el dinero llega de otra persona del mismo banco, no se adivina que salió de mi cuenta', () => {
+  const texto = `Le informamos que ha recibido un abono a su CUENTA DE AHORRO X1421.
+Banco origen: CUSCATLAN
+Originado por: MARIA LOPEZ
+Monto: USD20.00`;
+  const r = copia(resolverMovimiento(leerMovimiento(texto, REMITENTE_CUSCATLAN), CUENTAS, TARJETAS));
+  assert.equal(r.desde, 'externo');
+  assert.equal(r.hacia, 'cuenta:cusca');
+});
+
+test('si mando dinero a otra persona de BAC, no se adivina que llegó a mi cuenta de BAC', () => {
+  const texto = `Transfer365\nLe informamos el resultado de su operación Transfer365.\nBanco Destino: BAC\nBeneficiario: JUAN PEREZ\nMonto: 30.00\nNo Referencia: XYZ123456`;
+  const r = copia(resolverMovimiento(leerMovimiento(texto, REMITENTE_CUSCATLAN), CUENTAS, TARJETAS));
+  assert.equal(r.desde, 'cuenta:cusca');
+  assert.equal(r.hacia, 'externo');
+});
+
+test('avisos que parecen transferencias pero no se pueden leer: se reportan, no se pierden', () => {
+  assert.equal(pareceTransferenciaSinLeer('Su transferencia por $45.00 fue aplicada con éxito.'), true);
+  assert.equal(leerMovimiento('Su transferencia por $45.00 fue aplicada con éxito.', REMITENTE_BAC), null);
+  assert.equal(pareceTransferenciaSinLeer('Compra aprobada por USD 2.00 en PUMA. Hacé tus transferencias en línea.'), false);
+  assert.equal(pareceTransferenciaSinLeer('Su transferencia fue rechazada. Monto: $45.00'), false);
+  assert.equal(pareceTransferenciaSinLeer('Conocé las nuevas funciones de tu banca en línea'), false);
+});
+
+/* ---------- Sin duplicados ---------- */
+
+const MOV = (extra) => ({ id: 'm1', monto: 50, fecha: '2026-11-04', desde: 'cuenta:bac', hacia: 'cuenta:cusca', origen: 'correo', lados: ['sale'], ...extra });
+
+test('la misma transferencia avisada por el otro banco con otra referencia se enlaza', () => {
+  const existentes = [MOV()];
+  const delOtroBanco = { id: 'ref-OTRA', monto: 50, fecha: '2026-11-05', desde: 'cuenta:bac', hacia: 'cuenta:cusca', lado: 'entra' };
+  assert.equal(buscarMismoMovimiento(existentes, delOtroBanco).id, 'm1');
+  // El otro banco no conocía la cuenta de origen: igual es la misma.
+  assert.equal(buscarMismoMovimiento(existentes, { ...delOtroBanco, desde: 'externo' }).id, 'm1');
+  // Ya se enlazó un aviso de ese lado: es otra transferencia por el mismo monto.
+  assert.equal(buscarMismoMovimiento([MOV({ lados: ['sale', 'entra'] })], delOtroBanco), null);
+});
+
+test('dos envíos iguales avisados por el mismo banco son dos transferencias (sin "¿Repetido?")', () => {
+  const segundo = { id: 'ref-2', monto: 50, fecha: '2026-11-04', desde: 'cuenta:bac', hacia: 'cuenta:cusca', lado: 'sale' };
+  assert.equal(buscarMismoMovimiento([MOV()], segundo), null);
+  assert.equal(buscarMovimientoParecido([MOV()], segundo), null);
+});
+
+test('una transferencia anotada a mano se enlaza con el aviso (no se anota dos veces)', () => {
+  const manual = { id: 'a-mano', monto: 50, fecha: '2026-11-03', desde: 'cuenta:bac', hacia: 'cuenta:cusca' };
+  const aviso = { id: 'ref-1', monto: 50, fecha: '2026-11-04', desde: 'cuenta:bac', hacia: 'cuenta:cusca', lado: 'sale' };
+  assert.equal(buscarMismoMovimiento([manual], aviso).id, 'a-mano');
+  // Mi transferencia a la cuenta de mi esposa (registrada en la app) desde los dos lados.
+  assert.equal(buscarMismoMovimiento([{ ...manual, lados: ['sale'] }], { ...aviso, lado: 'entra' }).id, 'a-mano');
+  // Si salió de otra cuenta, no es la misma.
+  assert.equal(buscarMismoMovimiento([manual], { ...aviso, desde: 'cuenta:otra' }), null);
+  // Una borrada en la app se enlaza igual, para no volver a crearla.
+  assert.equal(buscarMismoMovimiento([{ ...manual, descartado: true }], aviso).id, 'a-mano');
+});
+
+test('un gasto anotado a mano con la misma tarjeta y monto se enlaza con el aviso', () => {
+  const gastos = [
+    { id: 'g1', monto: 2.5, fecha: '2026-11-04', medio: 'tarjeta:agri' },
+    { id: 'g2', monto: 2.5, fecha: '2026-11-04', medio: 'efectivo' },
+  ];
+  assert.equal(buscarGastoIgual(gastos, { monto: 2.5, fecha: '2026-11-04', medio: 'tarjeta:agri' }).id, 'g1');
+  // Ya enlazado: el segundo café igual se anota aparte.
+  assert.equal(buscarGastoIgual([{ ...gastos[0], correoId: 'x' }], { monto: 2.5, fecha: '2026-11-04', medio: 'tarjeta:agri' }), null);
+  assert.equal(buscarGastoIgual(gastos, { monto: 2.5, fecha: '2026-11-07', medio: 'tarjeta:agri' }), null);
+});
+
+/* ---------- Cobros automáticos de gastos fijos ---------- */
+
+const FIJOS = [
+  { id: 'u', nombre: 'Universidad', monto: 120, dia: 5, medio: 'tarjeta:agri', comercio: '' },
+  { id: 'net', nombre: 'Internet', monto: 35.5, dia: 15, medio: 'cuenta:cusca', comercio: 'TIGO, Millicom' },
+  { id: 'gym', nombre: 'Gimnasio', monto: 25, dia: 10, medio: 'tarjeta:agri', comercio: '' },
+  { id: 'luz', nombre: 'Luz', monto: 30, dia: 20, medio: 'efectivo', comercio: '' },
+];
+
+test('palabras para reconocer un gasto fijo', () => {
+  assert.deepEqual(copia(palabrasDelFijo(FIJOS[0])), ['universidad']);
+  assert.deepEqual(copia(palabrasDelFijo(FIJOS[1])), ['tigo', 'millicom']);
+  assert.deepEqual(copia(palabrasDelFijo(FIJOS[3])), [], '"Luz" es muy corta: se reconoce por monto o escribiendo cómo aparece');
+  assert.deepEqual(copia(palabrasDelFijo({ nombre: 'Cuota del colegio' })), ['colegio']);
+});
+
+test('el cobro de la universidad con su tarjeta marca el gasto fijo, aunque cambie el monto', () => {
+  const r = buscarFijoDelCobro(FIJOS, {}, { monto: 135, fecha: '2026-11-06', medio: 'tarjeta:agri', texto: 'UNIVERSIDAD DON BOSCO' });
+  assert.equal(r.clave, 'fijo_u');
+  assert.equal(r.porNombre, true);
+  assert.equal(r.yaPagado, false);
+});
+
+test('por lo que escribieron en "cómo aparece en el correo"', () => {
+  const r = buscarFijoDelCobro(FIJOS, {}, { monto: 35.5, fecha: '2026-11-14', medio: 'cuenta:cusca', texto: 'PAGO TIGO RESIDENCIAL' });
+  assert.equal(r.clave, 'fijo_net');
+});
+
+test('por monto exacto, con la misma tarjeta y cerca del día de pago', () => {
+  assert.equal(buscarFijoDelCobro(FIJOS, {}, { monto: 25, fecha: '2026-11-11', medio: 'tarjeta:agri', texto: 'SMARTFIT 001' }).clave, 'fijo_gym');
+  // Lejos del día de pago: es otra compra de $25.
+  assert.equal(buscarFijoDelCobro(FIJOS, {}, { monto: 25, fecha: '2026-11-24', medio: 'tarjeta:agri', texto: 'RESTAURANTE' }), null);
+  // Con otra tarjeta: no.
+  assert.equal(buscarFijoDelCobro(FIJOS, {}, { monto: 25, fecha: '2026-11-11', medio: 'tarjeta:otra', texto: 'SMARTFIT' }), null);
+});
+
+test('el nombre no basta si se cobró con otra tarjeta que la del gasto fijo', () => {
+  assert.equal(buscarFijoDelCobro(FIJOS, {}, { monto: 120, fecha: '2026-11-05', medio: 'cuenta:bac', texto: 'UNIVERSIDAD' }), null);
+});
+
+test('si el gasto fijo ya estaba pagado, se avisa para no anotarlo doble', () => {
+  const r = buscarFijoDelCobro(FIJOS, { fijo_u: { fecha: '2026-11-05' } }, { monto: 120, fecha: '2026-11-05', medio: 'tarjeta:agri', texto: 'UNIVERSIDAD' });
+  assert.equal(r.yaPagado, true);
+  assert.equal(r.porNombre, true);
+});
+
+test('la huella cambia cuando cambia la configuración', () => {
+  assert.equal(huella('a'), huella('a'));
+  assert.notEqual(huella('cuentas: 1421'), huella('cuentas: 1421, 8320'));
 });

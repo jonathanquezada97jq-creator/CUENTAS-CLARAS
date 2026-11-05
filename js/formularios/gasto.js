@@ -56,6 +56,13 @@ export function abrirFormularioGasto(mes, idGasto) {
   if (parecido) {
     intro = `Parece la misma compra que "${parecido.nota || parecido.categoria}" (${dinero(parecido.monto)}), anotada a mano. Si es la misma, eliminen una de las dos; si no, guarden y se quita la marca.`;
   }
+  // "pago:fijo_<id>": el lector vio un cobro con el monto de un gasto fijo que ya estaba pagado.
+  const fijo = gasto?.posibleRepetido?.startsWith('pago:fijo_')
+    ? datos.fijos.find((f) => `pago:fijo_${f.id}` === gasto.posibleRepetido)
+    : null;
+  if (fijo) {
+    intro = `Parece el cobro de "${fijo.nombre}", que ya está marcado como pagado este mes. Si es ese cobro, eliminen este gasto; si es otra compra, guarden y se quita la marca.`;
+  }
 
   abrirFormulario({
     titulo: gasto ? 'Editar gasto' : 'Agregar gasto',

@@ -127,9 +127,11 @@ function detalleDelPago(pago, esMesActual, datos) {
   const r = pago.registro;
   if (pago.tipo === TIPO_PAGO.FIJO) {
     const medio = pago.pagado ? pago.medio : r.medio;
-    return [r.categoria || 'Gasto fijo', idDeCuenta(medio) ? `desde ${nombreDeReferencia(medio, datos)}` : '']
-      .filter(Boolean)
-      .join(' · ');
+    let como = '';
+    if (idDeCuenta(medio)) como = `desde ${nombreDeReferencia(medio, datos)}`;
+    if (idDeTarjeta(medio)) como = `con ${nombreDeReferencia(medio, datos)}`;
+    const delCorreo = pago.pagado && pago.delCorreo ? 'cobro automático (aviso del banco)' : '';
+    return [r.categoria || 'Gasto fijo', como, delCorreo].filter(Boolean).join(' · ');
   }
   if (pago.tipo === TIPO_PAGO.PLAZO) {
     const estado = pago.pagado
@@ -205,7 +207,9 @@ export function filaMovimiento(movimiento, datos, mes) {
   const fecha = leerFecha(movimiento.fecha);
   const quien = movimiento.autor?.nombre ? ` · ${movimiento.autor.nombre.split(' ')[0]}` : '';
   const ruta = `${nombreDeReferencia(movimiento.desde, datos)} → ${nombreDeReferencia(movimiento.hacia, datos)}`;
-  const detalle = [fecha ? fechaCorta(fecha) : '', ruta, movimiento.nota].filter(Boolean).join(' · ');
+  // Anotado a mano y confirmado después por el aviso del banco.
+  const confirmado = movimiento.origen !== 'correo' && movimiento.referencias?.length ? 'confirmado por el banco' : '';
+  const detalle = [fecha ? fechaCorta(fecha) : '', ruta, movimiento.nota, confirmado].filter(Boolean).join(' · ');
   const titulo = tituloMovimiento(movimiento);
   const repetido = movimiento.posibleRepetido ? ` ${chip('¿Repetido?', 'aviso')}` : '';
   return `<li class="lista__fila">

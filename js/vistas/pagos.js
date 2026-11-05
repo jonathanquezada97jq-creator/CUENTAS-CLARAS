@@ -9,6 +9,7 @@ import { resumenDelMes, gastosDelMes } from '../domain/presupuesto.js';
 import { TIPOS_INGRESO } from '../constants/catalogos.js';
 import { estadoDelLector, MINUTOS_ENTRE_REVISIONES, MINUTOS_SIN_NOTICIAS } from '../domain/lector.js';
 import { movimientosDelMes } from '../domain/cuentas.js';
+import { idDeTarjeta } from '../domain/tarjetas.js';
 import { boton, bloqueVacio, chip, enlacePestana, filaMovimiento, filaPago, textoMedio } from '../ui/componentes.js';
 import { ICONOS } from '../ui/iconos.js';
 import { avisar } from '../ui/aviso.js';
@@ -79,7 +80,7 @@ function seccionGastos(datos, mes) {
       const quien = g.autor?.nombre ? ` · ${g.autor.nombre.split(' ')[0]}` : '';
       const titulo = g.nota || g.categoria;
       return `<li class="lista__fila">
-        <button type="button" class="lista__enlace" data-accion="editar-gasto" data-mes="${mes}" data-id="${esc(g.id)}"><div class="lista__titulo">${esc(titulo)}${g.posibleRepetido ? ` ${chip('¿Repetido?', 'aviso')}` : ''}</div><div class="lista__detalle">${fecha ? fechaCorta(fecha) : ''} · ${esc(g.categoria)} · ${esc(textoMedio(g.medio, datos))}${esc(quien)}</div></button>
+        <button type="button" class="lista__enlace" data-accion="editar-gasto" data-mes="${mes}" data-id="${esc(g.id)}"><div class="lista__titulo">${esc(titulo)}${g.posibleRepetido ? ` ${chip('¿Repetido?', 'aviso')}` : ''}</div><div class="lista__detalle">${fecha ? fechaCorta(fecha) : ''} · ${esc(g.categoria)} · ${esc(textoMedio(g.medio, datos))}${g.correoId ? ' · confirmado por el banco' : ''}${esc(quien)}</div></button>
         <span class="monto">${dinero(g.monto)}</span>
         <button type="button" class="lista__borrar" data-accion="borrar-gasto" data-mes="${mes}" data-id="${esc(g.id)}" aria-label="Borrar gasto ${esc(titulo)}">${ICONOS.cerrar}</button>
       </li>`;
@@ -134,9 +135,12 @@ function textoDeCuenta(c) {
     const r = c.resultado;
     const partes = [`${r.nuevos} ${r.nuevos === 1 ? 'gasto nuevo' : 'gastos nuevos'}`];
     if (r.movimientos) partes.push(`${r.movimientos} ${r.movimientos === 1 ? 'transferencia nueva' : 'transferencias nuevas'}`);
+    if (r.fijos) partes.push(`${r.fijos} ${r.fijos === 1 ? 'gasto fijo marcado pagado' : 'gastos fijos marcados pagados'}`);
+    if (r.enlazados) partes.push(`${r.enlazados} ya anotados a mano o por el otro banco`);
     partes.push(`${r.yaEstaban} ya estaban`);
     if (r.sinTarjeta) partes.push(`${r.sinTarjeta} con tarjeta no registrada`);
     if (r.sinCuenta) partes.push(`${r.sinCuenta} de cuentas que no están en la app`);
+    if (r.sinLeer) partes.push(`${r.sinLeer} sin leer`);
     return `Listo: ${partes.join(' · ')}.`;
   }
   return c.apagado ? `Su lector puede estar apagado (${ultima}).` : `Anota solo lo nuevo · ${ultima}.`;
@@ -160,6 +164,7 @@ function seccionLector(estado, mes, hoy) {
   }
   const esFuturo = mes > mesDe(hoy);
   const repetidos = lector.cuentas.flatMap((c) => c.resultado?.posiblesRepetidos || []);
+  const pendientes = lector.cuentas.flatMap((c) => c.pendientes.map((texto) => `${c.nombre}: ${texto}`));
   const cuentas = lector.cuentas
     .map((c) => {
       const [texto, tono] = CHIP_DE_ESTADO[c.estado] || (c.apagado ? ['Apagado', 'mal'] : ['Activo', 'bien']);
@@ -174,8 +179,30 @@ function seccionLector(estado, mes, hoy) {
     <p class="nota">Las compras con tarjeta y las transferencias que el banco avisa por correo se anotan solas. Si falta algo de ${nombre}, pidan que se revisen todos los correos del mes: no se repite lo que ya está.</p>
     ${boton}
     <ul class="lista">${cuentas}</ul>
+    ${seccionPendientes(pendientes)}
     ${repetidos.length ? `<p class="nota nota--aviso"><b>Revisen ${repetidos.length === 1 ? 'esto' : 'estos'}:</b> ${repetidos.length === 1 ? 'parece' : 'parecen'} anotado${repetidos.length === 1 ? '' : 's'} a mano también (${esc(repetidos.join('; '))}). Están marcados con "¿Repetido?" en los gastos o en los movimientos; si sobra, tóquenlo y elimínenlo.</p>` : ''}
   </section>`;
+}
+
+/** Cuántos avisos sin anotar se listan; el resto se resume. */
+const MAXIMO_PENDIENTES = 6;
+
+/**
+ * Avisos que el lector no pudo anotar: transferencias en un formato que
+ * todavía no entiende o entre cuentas que no están en la app.
+ */
+function seccionPendientes(pendientes) {
+  if (!pendientes.length) return '';
+  const lista = pendientes
+    .slice(0, MAXIMO_PENDIENTES)
+    .map((texto) => `<li>${esc(texto)}</li>`)
+    .join('');
+  const mas = pendientes.length > MAXIMO_PENDIENTES ? `<li>y ${pendientes.length - MAXIMO_PENDIENTES} más</li>` : '';
+  return `<div class="nota nota--aviso">
+    <b>${pendientes.length === 1 ? 'Un aviso no se pudo anotar' : `${pendientes.length} avisos no se pudieron anotar`}:</b>
+    <ul class="lista-simple">${lista}${mas}</ul>
+    Si dice "ninguna cuenta está en la app", agreguen esa cuenta en Bancos y en unos minutos se anota sola. Si dice "Sin leer", en el script corran <b>verAvisosSinLeer</b> y manden el texto a quien mantiene la app. En Gmail están con la etiqueta <i>Cuentas Claras/Revisar</i>.
+  </div>`;
 }
 
 function seccionFijos(datos) {
@@ -186,7 +213,7 @@ function seccionFijos(datos) {
       fijos.length
         ? `<ul class="lista">${fijos
             .map(
-              (f) => `<li class="lista__fila"><button type="button" class="lista__enlace" data-accion="editar-fijo" data-id="${esc(f.id)}"><div class="lista__titulo">${esc(f.nombre)}</div><div class="lista__detalle">Día ${esc(f.dia)} · ${esc(f.categoria)}</div></button><span class="monto">${dinero(f.monto)}</span></li>`,
+              (f) => `<li class="lista__fila"><button type="button" class="lista__enlace" data-accion="editar-fijo" data-id="${esc(f.id)}"><div class="lista__titulo">${esc(f.nombre)}</div><div class="lista__detalle">Día ${esc(f.dia)} · ${esc(f.categoria)}${idDeTarjeta(f.medio) ? ' · cargo automático' : ''}</div></button><span class="monto">${dinero(f.monto)}</span></li>`,
             )
             .join('')}</ul>`
         : '<p class="nota">Alquiler, luz, agua, internet, colegiatura: todo lo que se repite cada mes.</p>'

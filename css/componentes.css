@@ -788,3 +788,13 @@
   font-size: 12.5px;
   text-align: right;
 }
+
+/* Lista corta dentro de una nota (por ejemplo, los avisos del banco sin anotar). */
+.nota .lista-simple {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.nota .lista-simple li + li {
+  margin-top: 2px;
+}

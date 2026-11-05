@@ -1,4 +1,9 @@
-/** Formulario de gastos fijos mensuales (alquiler, luz, agua, internet…). */
+/**
+ * Formulario de gastos fijos mensuales (alquiler, luz, universidad, internet…).
+ * Pueden pagarse en efectivo, desde una cuenta o con tarjeta de crédito (cobro
+ * automático). Si el banco avisa el cobro por correo, el lector de avisos
+ * marca el fijo como pagado (ver apps-script/Codigo.gs, buscarFijoDelCobro).
+ */
 import { abrirFormulario } from '../ui/formulario.js';
 import { leer } from '../state/store.js';
 import { guardarRegistro, eliminarRegistro } from '../data/repositorio.js';
@@ -14,15 +19,27 @@ function campos(datos) {
     { nombre: 'monto', etiqueta: 'Monto aproximado', tipo: 'dinero', requerido: true, medio: true },
     { nombre: 'dia', etiqueta: 'Día de pago', tipo: 'dia', requerido: true, medio: true, ejemplo: '20' },
   ];
-  if (datos.cuentas.length) {
-    lista.push({
-      nombre: 'medio',
-      etiqueta: '¿Cómo lo pagan?',
-      tipo: 'lista',
-      opciones: opcionesDeMedio(datos, { efectivo: 'En efectivo o en ventanilla', tarjetas: false, prefijoCuenta: 'Desde la cuenta ' }),
-      porDefecto: MEDIO_EFECTIVO,
-      ayuda: 'Si sale de una cuenta (débito automático o banca en línea), al marcarlo pagado se resta de su saldo.',
-    });
+  if (datos.cuentas.length || datos.tarjetas.length) {
+    const medios = opcionesDeMedio(datos, { efectivo: 'En efectivo o en ventanilla', prefijoCuenta: 'Desde la cuenta ' }).map(
+      ([valor, texto]) => [valor, valor.startsWith('tarjeta:') ? `Cargo automático · ${texto}` : texto],
+    );
+    lista.push(
+      {
+        nombre: 'medio',
+        etiqueta: '¿Cómo lo pagan?',
+        tipo: 'lista',
+        opciones: medios,
+        porDefecto: MEDIO_EFECTIVO,
+        ayuda: 'Al marcarlo pagado se resta de la cuenta o se suma a la tarjeta.',
+      },
+      {
+        nombre: 'comercio',
+        etiqueta: 'Cómo aparece en el correo del banco (opcional)',
+        ejemplo: 'UDB, TIGO, NETFLIX',
+        ayuda: 'Cuando llegue el aviso del cobro, se marca pagado solo. Si lo dejan vacío, se reconoce por el nombre o por el monto exacto cerca del día de pago.',
+        mostrarSi: ['medio', medios.map(([valor]) => valor).filter((valor) => valor !== MEDIO_EFECTIVO)],
+      },
+    );
   }
   return lista;
 }
@@ -40,7 +57,7 @@ export function abrirFormularioFijo(id) {
     titulo: fijo ? 'Editar gasto fijo' : 'Nuevo gasto fijo',
     intro: fijo
       ? ''
-      : 'Lo que se paga todos los meses. Si lo cargan a una tarjeta, no lo agreguen aquí: ya va en el saldo.',
+      : 'Lo que se paga todos los meses. Si se cobra solo a una tarjeta o a una cuenta (universidad, internet, streaming), elijan cuál: al llegar el aviso del banco se marca pagado, sin anotarlo dos veces.',
     campos: campos(datos),
     valores: fijo || {},
     validar,

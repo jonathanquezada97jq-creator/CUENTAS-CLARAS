@@ -269,3 +269,20 @@ test('nombres de banco escritos distinto se reconocen como el mismo', () => {
   assert.equal(claveDeBanco('Banco de América Central'), 'bac');
   assert.equal(claveDeBanco('BAC'), 'bac');
 });
+
+test('gasto fijo con cargo automático a la tarjeta: sube su saldo al marcarlo y baja al desmarcarlo', () => {
+  const datos = datosDePrueba();
+  datos.fijos.push({ id: 'uni', nombre: 'Universidad', monto: 120, dia: 5, medio: 'tarjeta:atl' });
+  const plan = planificarPago(datos, MES, 'fijo_uni', HOY, { fecha: '2026-11-05' });
+  assert.deepEqual(plan.pagados.fijo_uni, { fecha: '2026-11-05', monto: 120, medio: 'tarjeta:atl' });
+  assert.deepEqual(plan.tarjetas, [{ id: 'atl', deltaSaldo: 120 }]);
+  assert.deepEqual(plan.cuentas, []);
+
+  datos.pagados[MES] = { fijo_uni: { ...plan.pagados.fijo_uni, monto: 135, origen: 'correo' } };
+  const pago = pagoDe(datos, 'fijo_uni');
+  assert.equal(pago.monto, 135, 'se muestra lo que realmente cobraron');
+  assert.equal(pago.delCorreo, true);
+  // Pagado con tarjeta: no sale del dinero del mes hasta que se pague la tarjeta.
+  assert.equal(resumenDelMes(datos, MES, HOY).pagadoConTarjeta, 135);
+  assert.deepEqual(planificarPago(datos, MES, 'fijo_uni', HOY).tarjetas, [{ id: 'atl', deltaSaldo: -135 }]);
+});

@@ -104,7 +104,7 @@ Cada uno entra con su propia cuenta de Google. Los datos son los mismos para los
 1. **Bancos → Agregar cuenta:** banco, últimos 4 dígitos de la cuenta y de su tarjeta de débito, y el saldo de hoy (el de la banca en línea).
 2. **Ingresos → Editar** a cada persona → **Cuenta donde le depositan**. Lo mismo en los otros ingresos que caen a una cuenta.
 3. **Cuando llega el sueldo:** en Bancos, el botón **Llegó el sueldo de …** de esa cuenta anota el depósito con el monto puesto (o lo anota solo el lector, si el banco manda aviso).
-4. **Al pagar, elijan de dónde salió el dinero:** gastos (*Débito · cuenta*), cuotas, tarjetas (*¿De dónde salió el dinero?*) y gastos fijos (*¿Cómo lo pagan?*). El saldo de la cuenta baja solo.
+4. **Al pagar, elijan de dónde salió el dinero:** gastos (*Débito · cuenta*), cuotas, tarjetas (*¿De dónde salió el dinero?*) y gastos fijos (*¿Cómo lo pagan?*, que también puede ser un cargo automático a una tarjeta de crédito). El saldo de la cuenta baja solo, o sube la deuda de la tarjeta.
 5. **Transferencias, depósitos y retiros:** Bancos → **Mover dinero**, o Pagos → **Movimientos entre cuentas → Anotar**. Una tarjeta pagada con una transferencia queda pagada en Pagos.
 
 Si el saldo de una cuenta no coincide con el banco, se corrige en **Bancos → Editar**.
@@ -116,7 +116,10 @@ Si el saldo de una cuenta no coincide con el banco, se corrige en **Bancos → E
 Un script de Google lee en Gmail los avisos del banco y los anota solos:
 
 - **Compras con tarjeta** ("Compra por USD 2.00 en PUMA DIDEA, tarjeta terminada en 1234"): como gasto, sumado al saldo de la tarjeta de crédito o restado de la cuenta si fue con débito.
-- **Transferencias Transfer365**: dinero que entra o sale de sus cuentas y pagos a tarjetas. La misma transferencia avisada por los dos bancos se anota una sola vez.
+- **Cobros automáticos** de gastos fijos (universidad, internet): marca el gasto fijo como pagado, sin anotarlo dos veces.
+- **Transferencias**: dinero que entra o sale de sus cuentas y pagos a tarjetas. La misma transferencia avisada por los dos bancos se anota una sola vez.
+- **Lo que ya anotaron a mano** no se repite: el aviso se enlaza con eso.
+- **Lo que no pudo leer** aparece en Pagos, para revisarlo.
 
 Desde **Pagos** se le puede pedir que revise todos los correos del mes, para anotar lo que se fue de paso. Cada persona lo instala en su cuenta en unos 10 minutos: [`docs/AVISOS-DEL-BANCO.md`](docs/AVISOS-DEL-BANCO.md).
 
