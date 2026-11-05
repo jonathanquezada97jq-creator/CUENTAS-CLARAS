@@ -30,6 +30,7 @@ const FUNCIONES = [
   'palabrasDelFijo',
   'pareceTransferenciaSinLeer',
   'huella',
+  'fechaCreible',
 ];
 const {
   leerAviso,
@@ -52,6 +53,7 @@ const {
   palabrasDelFijo,
   pareceTransferenciaSinLeer,
   huella,
+  fechaCreible,
 } = vm.runInNewContext(`${codigo}\n;({ ${FUNCIONES.join(', ')} })`, {});
 
 /** Objeto creado dentro de vm → objeto normal, para comparar con deepEqual. */
@@ -583,4 +585,47 @@ test('si el gasto fijo ya estaba pagado, se avisa para no anotarlo doble', () =>
 test('la huella cambia cuando cambia la configuración', () => {
   assert.equal(huella('a'), huella('a'));
   assert.notEqual(huella('cuentas: 1421'), huella('cuentas: 1421, 8320'));
+});
+
+/* ---------- Avisos de días después del 2: formatos y fechas ---------- */
+
+test('"Notificación de transferencia" (la palabra sola) también se lee', () => {
+  const texto = `Notificación de transferencia
+Cuenta origen: ****1421
+Cuenta destino: ****8320
+Monto: $15.00
+Fecha: 11/03/2026`;
+  const m = copia(leerMovimiento(texto, REMITENTE_CUSCATLAN));
+  assert.equal(m.monto, 15);
+  assert.equal(m.desde.ultimos, '1421');
+  assert.equal(m.hacia.ultimos, '8320');
+});
+
+test('fecha del aviso: si no tiene sentido, se prueba al revés o se usa la del correo', () => {
+  assert.equal(fechaCreible('2026-11-03', '2026-11-03'), '2026-11-03');
+  assert.equal(fechaCreible('2026-11-02', '2026-11-03'), '2026-11-02', 'un día antes: normal');
+  // "11/03/2026" escrito mes/día se lee 11 de marzo: es el 3 de noviembre.
+  assert.equal(fechaCreible('2026-03-11', '2026-11-03'), '2026-11-03');
+  assert.equal(fechaCreible('2026-07-15', '2026-11-03'), '2026-11-03', 'sin sentido: la del correo');
+  assert.equal(fechaCreible(null, '2026-11-03'), '2026-11-03');
+});
+
+test('la publicidad del banco no queda como aviso sin leer', () => {
+  assert.equal(pareceTransferenciaSinLeer('Aprovechá: transferencias sin costo y ganá hasta $50 en el sorteo'), false);
+  assert.equal(pareceTransferenciaSinLeer('Notificación de transferencia. Monto: $45.00'), true);
+});
+
+test('una transferencia que no se entiende no se anota como compra', () => {
+  // Trae dígitos y monto, pero no dice de qué cuenta a cuál: queda sin leer.
+  const texto = 'Transferencia procesada. Comprobante 4455. Monto: $80.00. Gracias por usar la tarjeta ****1234.';
+  assert.equal(leerMovimiento(texto, REMITENTE_BAC), null);
+  assert.equal(pareceTransferenciaSinLeer(texto), true);
+});
+
+test('"Has enviado $20.00 desde tu cuenta… a la cuenta…"', () => {
+  const m = copia(leerMovimiento('Has enviado $20.00 desde tu cuenta ****1421 a la cuenta ****5555 de Banco Agrícola.', REMITENTE_CUSCATLAN));
+  assert.equal(m.monto, 20);
+  assert.equal(m.desde.ultimos, '1421');
+  assert.equal(m.hacia.ultimos, '5555');
+  assert.equal(m.hacia.banco, 'agricola');
 });

@@ -48,7 +48,7 @@
  */
 
 /** Cambia con cada versión del script: al cambiar, se vuelve a revisar el mes. */
-const VERSION_LECTOR = '2026-11-04';
+const VERSION_LECTOR = '2026-11-04b';
 
 /* ------------------------------------------------------------------ */
 /* Ajustes: lo único que podría hacer falta cambiar                    */
@@ -65,13 +65,23 @@ const AJUSTES = {
    *   'from:(notificaciones@bancocuscatlan.com OR notificaciones_bac@baccredomatic.com)'
    */
   filtro:
-    '(compra OR consumo OR cargo OR transacción OR transaccion OR autorizada OR aprobada OR transferencia OR transfer365 OR abono OR traslado OR acreditado OR depósito OR deposito OR débito OR debito)',
+    '(compra OR consumo OR cargo OR transacción OR transaccion OR autorizada OR aprobada OR transferencia OR transferencias OR transfer365 OR transferiste OR transferido OR abono OR traslado OR acreditado OR depósito OR deposito OR débito OR debito)',
+  /**
+   * Además de esas palabras, se revisa todo lo que manden los bancos (por el
+   * remitente), aunque el aviso no traiga ninguna de las palabras de arriba.
+   */
+  remitentes:
+    'cuscatlan OR bancocuscatlan OR baccredomatic OR credomatic OR bancoagricola OR agricola OR davivienda OR promerica OR bancopromerica OR bancoatlantida OR atlantida OR bancohipotecario OR hipotecario OR bancoazul OR fedecredito OR bancoindustrial OR abank OR bfa',
   /** En la revisión de rutina, cuántos días hacia atrás mirar. */
   diasRecientes: 2,
   /** Cada cuántos minutos revisar: 5, 10, 15 o 30. */
   minutosEntreRevisiones: 5,
-  /** Tope de correos al revisar un mes completo (cada ejecución tiene 6 minutos). */
-  maximoCorreosPorMes: 500,
+  /**
+   * Cuánto puede durar cada revisión de un mes completo (Google corta a los 6
+   * minutos). Si no alcanza, la siguiente revisión automática sigue desde
+   * donde quedó.
+   */
+  segundosPorRevision: 270,
   zonaHoraria: 'America/El_Salvador',
   /** Diferencia con UTC de la zona horaria (El Salvador no cambia de horario). */
   desfaseUtc: '-06:00',
@@ -87,33 +97,39 @@ const AJUSTES = {
 function revisarCorreos() {
   conCandado_(() => {
     const contexto = crearContexto_({ guardar: true });
-    const solicitud = leerSolicitud_();
     const propiedades = PropertiesService.getUserProperties();
+    let enCurso = leerRevisionEnCurso_();
+    const solicitud = leerSolicitud_();
     if (solicitud && solicitud.id !== propiedades.getProperty('ultimaSolicitud')) {
+      // Un pedido nuevo desde la app va primero, aunque hubiera otra revisión a medias.
       propiedades.setProperty('ultimaSolicitud', solicitud.id);
-      atenderSolicitud_(solicitud, contexto);
+      enCurso = nuevaRevision_(solicitud.mes, { solicitud: solicitud.id });
+    } else if (!enCurso) {
+      // Si cambió el script o las cuentas, tarjetas o gastos fijos de la app,
+      // lo que antes no se pudo anotar quizá ahora sí: se revisa el mes de nuevo.
+      const huellaActual = `${VERSION_LECTOR}|${contexto.huella}`;
+      if (huellaActual !== propiedades.getProperty('ultimaHuella')) {
+        Logger.log('Cambió el lector o las cuentas, tarjetas o gastos fijos de la app: se revisa el mes actual.');
+        enCurso = nuevaRevision_(mesActual_(), { huella: huellaActual });
+      }
+    }
+    if (enCurso) {
+      continuarRevision_(enCurso, contexto);
       return;
     }
-    // Si cambió el script o las cuentas, tarjetas o gastos fijos de la app,
-    // lo que antes no se pudo anotar quizá ahora sí: se revisa el mes de nuevo.
-    const huella = `${VERSION_LECTOR}|${contexto.huella}`;
-    if (huella !== propiedades.getProperty('ultimaHuella')) {
-      Logger.log('Cambió el lector o las cuentas, tarjetas o gastos fijos de la app: se revisa el mes actual.');
-      revisarMes_(mesActual_(), contexto);
-      propiedades.setProperty('ultimaHuella', huella);
-    } else {
-      revisarRecientes_(contexto);
-    }
+    revisarRecientes_(contexto);
     escribirEstadoCuenta_(contexto, {});
   });
 }
 
-/** Busca y anota todo el mes actual ahora (sin esperar a que lo pidan en la app). */
+/**
+ * Busca y anota todo el mes actual ahora (sin esperar a que lo pidan en la
+ * app). Si no alcanza el tiempo, la revisión automática sigue sola.
+ */
 function revisarMesActual() {
   conCandado_(() => {
     const contexto = crearContexto_({ guardar: true });
-    revisarMes_(mesActual_(), contexto);
-    escribirEstadoCuenta_(contexto, resumenParaGuardar_(contexto.resumen, { estado: 'listo', mes: mesActual_() }));
+    continuarRevision_(nuevaRevision_(mesActual_(), {}), contexto);
   });
 }
 
@@ -333,6 +349,12 @@ function claveDeCuenta(correo) {
 const ES_TRANSFERENCIA = new RegExp(
   [
     'transfer\\s*365',
+    '\\btransferencias?\\b',
+    '\\btransferiste\\b',
+    '\\btransferid[oa]\\b',
+    '\\btransfiri[oó]\\b',
+    '\\btraslado\\b',
+    'pago\\s+a\\s+terceros',
     '(?:su|tu)\\s+transferencia',
     '(?:una|la)\\s+transferencia',
     'transferencia\\s+(?:efectuada|realizada|recibida|enviada|exitosa|finalizada|entre|a\\s+terceros|propia|local|ach|interbancaria|de\\s+fondos|electr[oó]nica|inmediata|procesada|aplicada)',
@@ -346,6 +368,8 @@ const ES_TRANSFERENCIA = new RegExp(
     'env[ií]o\\s+de\\s+dinero',
     '(?:te|le)\\s+(?:han\\s+)?(?:enviado|transferido|depositado)',
     'transferiste|enviaste\\s+(?:dinero|\\$|us\\$|usd)',
+    'has\\s+(?:enviado|transferido)',
+    'hiciste\\s+una\\s+transferencia',
   ].join('|'),
   'i',
 );
@@ -358,7 +382,11 @@ const ES_TRANSFERENCIA = new RegExp(
 const ES_PAGO_DE_TARJETA = /pago\s+(?:a|de)\s+(?:su\s+|tu\s+|la\s+)?tarjeta/i;
 
 /** Avisos de compra: estos nunca son transferencias. */
-const ES_AVISO_DE_COMPRA = /(^|\n)[\s•·*-]*(comercio|establecimiento)\s*:|\bcompra\s+(aprobada|autorizada|realizada|exitosa|por)\b/i;
+const ES_AVISO_DE_COMPRA =
+  /(^|\n)[\s•·*-]*(comercio|establecimiento)\s*:|\bcompra\s+(aprobada|autorizada|realizada|exitosa|por)\b|\bconsumo\s+(aprobado|autorizado|realizado|por|con)\b/i;
+
+/** Correos de publicidad del banco (no son avisos de algo que pasó). */
+const ES_PUBLICIDAD = /promoci[oó]n|beneficio|descuento|aprovech|sorteo|cashback|millas|conoc[eé]\s|descubr[ií]|desc[aá]rg|suscr[ií]b|bolet[ií]n|newsletter/i;
 
 /** El dueño del correo recibe el dinero (si no, lo manda). */
 const ES_ENTRADA =
@@ -629,7 +657,27 @@ function leerMovimiento(texto, remitente) {
  */
 function pareceTransferenciaSinLeer(texto) {
   const t = limpiarTexto_(texto);
-  return ES_TRANSFERENCIA.test(t) && !ES_AVISO_DE_COMPRA.test(t) && !TRANSFERENCIA_FALLIDA.test(t) && Boolean(montoEnTexto_(t) || /monto\s*:/i.test(t));
+  return (
+    ES_TRANSFERENCIA.test(t) &&
+    !ES_AVISO_DE_COMPRA.test(t) &&
+    !TRANSFERENCIA_FALLIDA.test(t) &&
+    !ES_PUBLICIDAD.test(t) &&
+    Boolean(montoEnTexto_(t) || /monto\s*:/i.test(t))
+  );
+}
+
+/**
+ * La fecha que dice el aviso, si tiene sentido: a 3 días o menos del correo.
+ * Si no, prueba con el día y el mes al revés (hay bancos que escriben
+ * 11/03/2026 por 3 de noviembre). Si tampoco, usa la fecha del correo.
+ */
+function fechaCreible(leida, delCorreo) {
+  if (!leida) return delCorreo;
+  if (diasEntre_(leida, delCorreo) <= 3) return leida;
+  const [anio, mes, dia] = leida.split('-');
+  const alReves = `${anio}-${dia}-${mes}`;
+  if (Number(dia) <= 12 && diasEntre_(alReves, delCorreo) <= 3) return alReves;
+  return delCorreo;
 }
 
 /** Los mismos últimos dígitos (los avisos a veces muestran solo 3). */
@@ -981,18 +1029,20 @@ function revisarMensaje_(mensaje, contexto) {
   let resultado;
   if (movimiento) {
     resultado = revisarMovimiento_(mensaje, movimiento, contexto);
+  } else if (pareceTransferenciaSinLeer(texto)) {
+    // Antes que leerAviso: una transferencia que no se entendió no se anota como compra.
+    resultado = avisoSinLeer_(mensaje, texto, contexto);
   } else {
     const aviso = leerAviso(texto);
     if (aviso && aviso.tipo === 'cargo') {
       resultado = revisarCargo_(mensaje, aviso, contexto);
-    } else if (pareceTransferenciaSinLeer(texto)) {
-      resultado = avisoSinLeer_(mensaje, texto, contexto);
     } else if (aviso) {
       Logger.log(`Ignorado (${aviso.motivo}): ${mensaje.getSubject()}`);
       resumen.ignorados += 1;
       resultado = 'ignorado';
     } else {
       resultado = 'no-es-aviso';
+      registrarCorreoDelBanco_(mensaje, texto, contexto);
     }
   }
   // Lo que no se pudo anotar queda pendiente (y se muestra en la app) hasta que se pueda.
@@ -1007,6 +1057,21 @@ function revisarMensaje_(mensaje, contexto) {
     }
   }
   return resultado;
+}
+
+/**
+ * Un correo de un banco que no es una compra ni una transferencia (o que no
+ * se reconoció): queda en el registro, para que se vea que sí se miró. Con
+ * verAvisosSinLeer también se muestra su texto, si trae un monto.
+ */
+function registrarCorreoDelBanco_(mensaje, texto, contexto) {
+  if (!bancoDelCorreo_(mensaje.getFrom(), '')) return;
+  const fecha = Utilities.formatDate(mensaje.getDate(), AJUSTES.zonaHoraria, 'yyyy-MM-dd');
+  Logger.log(`${fecha} · Correo del banco que no se anota: "${mensaje.getSubject()}"`);
+  if (contexto.mostrarTextoSinLeer && montoEnTexto_(limpiarTexto_(texto)) && (contexto.textosMostrados || 0) < 15) {
+    contexto.textosMostrados = (contexto.textosMostrados || 0) + 1;
+    Logger.log(`----- Texto del correo -----\n${limpiarTexto_(texto).replace(/\n{3,}/g, '\n\n').slice(0, 2500)}\n----- Fin del correo -----`);
+  }
 }
 
 /** Un aviso que parece una transferencia pero no se pudo leer: queda para revisar. */
@@ -1157,7 +1222,7 @@ function revisarMovimiento_(mensaje, movimiento, contexto) {
   }
   const idCorreo = mensaje.getId();
   const fechaDelCorreo = Utilities.formatDate(mensaje.getDate(), AJUSTES.zonaHoraria, 'yyyy-MM-dd');
-  const fecha = movimiento.fecha || fechaDelCorreo;
+  const fecha = fechaCreible(movimiento.fecha, fechaDelCorreo);
   const mes = fecha.slice(0, 7);
   const clave = idDeMovimiento(movimiento, idCorreo);
   const movimientos = contexto.movimientosDelMes(mes);
@@ -1312,7 +1377,7 @@ const SE_REINTENTA = ['sin-cuenta', 'sin-leer'];
 function revisarRecientes_(contexto) {
   const procesados = contexto.guardar ? leerProcesados_() : new Set();
   const desde = Date.now() - AJUSTES.diasRecientes * 86400000;
-  GmailApp.search(`newer_than:${AJUSTES.diasRecientes}d ${AJUSTES.filtro}`, 0, 50).forEach((hilo) => {
+  GmailApp.search(`newer_than:${AJUSTES.diasRecientes}d ${consultaDeAvisos_()}`, 0, 100).forEach((hilo) => {
     const resultados = [];
     hilo.getMessages().forEach((mensaje) => {
       // Los hilos juntan avisos viejos con el mismo asunto: solo se miran los recientes.
@@ -1327,58 +1392,127 @@ function revisarRecientes_(contexto) {
   registrarResumen_(contexto);
 }
 
-/**
- * Revisa todos los avisos de un mes, aunque ya se hubieran leído antes: así
- * aparecen los que se fueron de paso. Lo que ya está anotado no se repite.
- */
-function revisarMes_(mes, contexto) {
-  const { inicio, fin } = limitesDelMes(mes, AJUSTES.desfaseUtc);
-  const consulta = `${AJUSTES.filtro} after:${inicio} before:${fin}`;
-  const procesados = contexto.guardar ? leerProcesados_() : new Set();
-  const vistos = new Set();
-  const porPagina = 100;
-  let desde = 0;
-  let revisados = 0;
-  Logger.log(`Revisando los correos de ${mes}…`);
-
-  for (;;) {
-    const hilos = GmailApp.search(consulta, desde, porPagina);
-    hilos.forEach((hilo) => {
-      const resultados = [];
-      hilo.getMessages().forEach((mensaje) => {
-        const segundos = mensaje.getDate().getTime() / 1000;
-        if (segundos < inicio || segundos >= fin || vistos.has(mensaje.getId())) return;
-        if (revisados >= AJUSTES.maximoCorreosPorMes) return;
-        vistos.add(mensaje.getId());
-        revisados += 1;
-        const resultado = revisarMensaje_(mensaje, contexto);
-        resultados.push(resultado);
-        if (!SE_REINTENTA.includes(resultado)) procesados.add(mensaje.getId());
-      });
-      etiquetar_(hilo, resultados, contexto);
-    });
-    if (hilos.length < porPagina || revisados >= AJUSTES.maximoCorreosPorMes) break;
-    desde += porPagina;
-  }
-
-  if (contexto.guardar) guardarProcesados_(procesados);
-  if (revisados >= AJUSTES.maximoCorreosPorMes) {
-    Logger.log(`Se llegó al tope de ${AJUSTES.maximoCorreosPorMes} correos; afiná AJUSTES.filtro con el remitente del banco.`);
-  }
-  registrarResumen_(contexto);
+/** Búsqueda de Gmail: correos con palabras de avisos o que vienen de un banco. */
+function consultaDeAvisos_() {
+  return `(${AJUSTES.filtro} OR from:(${AJUSTES.remitentes}))`;
 }
 
-/** Atiende el pedido hecho desde la app y deja el resultado para que la app lo muestre. */
-function atenderSolicitud_(solicitud, contexto) {
-  const base = { mes: solicitud.mes, solicitud: solicitud.id };
-  escribirEstadoCuenta_(contexto, { ...base, estado: 'revisando' });
+/**
+ * Revisa los avisos de un mes, aunque ya se hubieran leído antes: así
+ * aparecen los que se fueron de paso. Lo que ya está anotado no se repite.
+ * Los revisa del más viejo al más nuevo; si no alcanza el tiempo de esta
+ * ejecución, devuelve desde dónde seguir.
+ * @param {{desdeMs?: number}} [opciones]  Seguir desde este momento (milisegundos).
+ * @returns {{completo: boolean, desdeMs?: number}}
+ */
+function revisarMes_(mes, contexto, { desdeMs = 0 } = {}) {
+  const comienzo = Date.now();
+  const { inicio, fin } = limitesDelMes(mes, AJUSTES.desfaseUtc);
+  const consulta = `${consultaDeAvisos_()} after:${inicio} before:${fin}`;
+  const procesados = contexto.guardar ? leerProcesados_() : new Set();
+  Logger.log(desdeMs ? `Siguiendo con los correos de ${mes} desde el ${fechaYHora_(desdeMs)}…` : `Revisando los correos de ${mes}…`);
+
+  // 1. Todos los avisos del mes, de todos los hilos (los bancos juntan muchos avisos
+  //    con el mismo asunto en un solo hilo), del más viejo al más nuevo.
+  const avisos = [];
+  const vistos = new Set();
+  const porPagina = 100;
+  for (let desde = 0; ; desde += porPagina) {
+    const hilos = GmailApp.search(consulta, desde, porPagina);
+    hilos.forEach((hilo) => {
+      hilo.getMessages().forEach((mensaje) => {
+        const ms = mensaje.getDate().getTime();
+        if (ms < inicio * 1000 || ms >= fin * 1000 || ms < desdeMs || vistos.has(mensaje.getId())) return;
+        vistos.add(mensaje.getId());
+        avisos.push({ mensaje, hilo, ms });
+      });
+    });
+    if (hilos.length < porPagina) break;
+  }
+  avisos.sort((a, b) => a.ms - b.ms);
+  Logger.log(`Correos de ${mes} para revisar${desdeMs ? ' (los que faltaban)' : ''}: ${avisos.length}`);
+
+  // 2. Revisarlos en orden mientras alcance el tiempo.
+  const limite = comienzo + AJUSTES.segundosPorRevision * 1000;
+  const resultadosPorHilo = new Map();
+  let siguiente = null;
+  for (let i = 0; i < avisos.length; i += 1) {
+    if (i > 0 && Date.now() > limite) {
+      siguiente = avisos[i].ms;
+      break;
+    }
+    const { mensaje, hilo } = avisos[i];
+    const resultado = revisarMensaje_(mensaje, contexto);
+    if (!SE_REINTENTA.includes(resultado)) procesados.add(mensaje.getId());
+    if (!resultadosPorHilo.has(hilo)) resultadosPorHilo.set(hilo, []);
+    resultadosPorHilo.get(hilo).push(resultado);
+  }
+  resultadosPorHilo.forEach((resultados, hilo) => etiquetar_(hilo, resultados, contexto));
+
+  if (contexto.guardar) guardarProcesados_(procesados);
+  registrarResumen_(contexto);
+  if (siguiente !== null) {
+    Logger.log(`No alcanzó el tiempo: falta desde el ${fechaYHora_(siguiente)}. La siguiente revisión automática sigue desde ahí.`);
+    return { completo: false, desdeMs: siguiente };
+  }
+  return { completo: true };
+}
+
+const fechaYHora_ = (ms) => Utilities.formatDate(new Date(ms), AJUSTES.zonaHoraria, 'yyyy-MM-dd HH:mm');
+
+/** Una revisión de un mes completo, que puede hacerse en varias partes. */
+function nuevaRevision_(mes, extra) {
+  return { mes, desdeMs: 0, partes: 0, errores: 0, resumen: null, ...extra };
+}
+
+/**
+ * Hace (o sigue) la revisión de un mes. Si no termina en esta ejecución,
+ * guarda hasta dónde llegó y la siguiente revisión automática sigue desde
+ * ahí, en lugar de empezar otra vez desde el día 1. Al terminar deja el
+ * resultado para la app.
+ */
+function continuarRevision_(enCurso, contexto) {
+  if (enCurso.resumen) contexto.resumen = enCurso.resumen;
+  enCurso.partes += 1;
+  const pedido = enCurso.solicitud ? { mes: enCurso.mes, solicitud: enCurso.solicitud } : null;
+  if (pedido) escribirEstadoCuenta_(contexto, { ...pedido, estado: 'revisando' });
+  let avance;
   try {
-    revisarMes_(solicitud.mes, contexto);
-    escribirEstadoCuenta_(contexto, resumenParaGuardar_(contexto.resumen, { ...base, estado: 'listo' }));
+    avance = revisarMes_(enCurso.mes, contexto, { desdeMs: enCurso.desdeMs });
   } catch (error) {
-    escribirEstadoCuenta_(contexto, { ...base, estado: 'error', mensaje: String(error.message || error).slice(0, 300) });
+    // Se reintenta en la siguiente revisión; después de 3 errores seguidos se abandona.
+    enCurso.errores += 1;
+    guardarRevisionEnCurso_(enCurso.errores >= 3 ? null : enCurso);
+    if (pedido && enCurso.errores >= 3) {
+      escribirEstadoCuenta_(contexto, { ...pedido, estado: 'error', mensaje: String(error.message || error).slice(0, 300) });
+    }
     throw error;
   }
+  if (!avance.completo) {
+    guardarRevisionEnCurso_({ ...enCurso, desdeMs: avance.desdeMs, errores: 0, resumen: contexto.resumen });
+    escribirEstadoCuenta_(contexto, {});
+    return;
+  }
+  guardarRevisionEnCurso_(null);
+  if (enCurso.huella) PropertiesService.getUserProperties().setProperty('ultimaHuella', enCurso.huella);
+  if (enCurso.partes > 1) Logger.log(`Listo: el mes se revisó completo en ${enCurso.partes} partes.`);
+  escribirEstadoCuenta_(contexto, resumenParaGuardar_(contexto.resumen, { ...(pedido || { mes: enCurso.mes }), estado: 'listo' }));
+}
+
+const CLAVE_EN_CURSO = 'revisionEnCurso';
+
+function leerRevisionEnCurso_() {
+  try {
+    return JSON.parse(PropertiesService.getUserProperties().getProperty(CLAVE_EN_CURSO) || 'null');
+  } catch (error) {
+    return null;
+  }
+}
+
+function guardarRevisionEnCurso_(enCurso) {
+  const propiedades = PropertiesService.getUserProperties();
+  if (enCurso) propiedades.setProperty(CLAVE_EN_CURSO, JSON.stringify(enCurso));
+  else propiedades.deleteProperty(CLAVE_EN_CURSO);
 }
 
 function resumenParaGuardar_(resumen, extra) {

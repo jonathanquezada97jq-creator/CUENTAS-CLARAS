@@ -11,6 +11,9 @@ El archivo [`apps-script/Codigo.gs`](../apps-script/Codigo.gs) (el "lector") lee
 - **Solo:** cada 5 minutos revisa los avisos de los últimos 2 días.
 - **Cuando cambia algo:** si se actualiza el script o agregan o cambian en la app una cuenta, una tarjeta o un gasto fijo, en la siguiente revisión vuelve a mirar **todo el mes actual**. Así se anota lo que antes no se pudo (por ejemplo, las transferencias de una cuenta que todavía no estaba registrada).
 - **Cuando lo piden desde la app:** en **Pagos**, el botón **Buscar lo de (mes) en los correos** hace que el lector de cada cuenta revise **todos** los avisos de ese mes y anote lo que falte. Sirve para meses anteriores o para lo que pasó antes de instalarlo.
+- **Todo el mes, aunque sean muchos correos:** revisa del día 1 en adelante. Google deja correr cada revisión unos 6 minutos; si no alcanza, la siguiente revisión automática (5 minutos después) sigue desde donde quedó, sin empezar otra vez. Mientras tanto la app dice **Revisando**.
+- **Qué correos mira:** los que traen palabras de avisos (compra, cargo, transferencia, Transfer365, abono, débito…) **y todo lo que mandan los bancos** (Cuscatlán, BAC, Agrícola, Davivienda, Promerica, Atlántida, Hipotecario…), aunque no traigan esas palabras.
+- **Fechas:** si un banco escribe la fecha al revés (11/03/2026 por 3 de noviembre), se corrige con la fecha del correo.
 
 ### Compras con tarjeta
 
@@ -65,7 +68,9 @@ Si un aviso parece una transferencia pero el lector no entiende su formato, o si
 - En Gmail quedan con la etiqueta *Cuentas Claras/Revisar*.
 - Se vuelven a intentar en cada revisión mientras sean recientes, y siempre que se busque el mes.
 
-Para los "Sin leer": en script.google.com elegí la función **`verAvisosSinLeer`** y tocá **Ejecutar**. En el registro sale el texto completo de cada uno: copialo y mandáselo a quien mantiene la app para enseñarle ese formato al lector.
+Para los "Sin leer": en script.google.com elegí la función **`verAvisosSinLeer`** y tocá **Ejecutar**. En el registro sale el texto completo de cada uno, y también el de los correos de los bancos con un monto que no se reconocieron como compra ni transferencia: copialo y mandáselo a quien mantiene la app para enseñarle ese formato al lector.
+
+En el registro de cualquier revisión, cada correo de un banco deja una línea, aunque no se anote ("Correo del banco que no se anota: …"): así se ve que sí se miró.
 
 Corre en **la cuenta de Google de cada persona** (Apps Script), no en la app ni en otro servidor. Es gratis y funciona aunque no tengan la app abierta. Para que se lean los correos de los dos, cada uno instala su propio lector.
 
@@ -153,7 +158,8 @@ El lector escribe en Firebase con la cuenta de Google donde está instalado. La 
 
 En `AJUSTES`, arriba de `Codigo.gs`:
 
-- **`filtro`:** qué correos son avisos del banco. Para que lea solo los de tus bancos, agregá los remitentes, por ejemplo `'from:(notificaciones@bancocuscatlan.com OR notificaciones_bac@baccredomatic.com)'`.
+- **`filtro`:** palabras de los avisos que se buscan en Gmail.
+- **`remitentes`:** además, se revisa todo lo que manden estos remitentes (nombres o dominios de los bancos, separados por `OR`). Si tu banco no está, agregalo: por ejemplo `OR bancoXYZ.com.sv`.
 - **`minutosEntreRevisiones`:** 5, 10, 15 o 30. Si lo cambiás, cambiá también `MINUTOS_ENTRE_REVISIONES` en `js/domain/lector.js` para que la app diga el tiempo correcto.
 
 Después de cambiar algo, guardá y volvé a correr `instalarRevisionAutomatica`.
@@ -174,7 +180,8 @@ Google manda un correo cuando una revisión automática da error, y si el error 
 | `No se pudo leer las tarjetas (404)` | Revisá `proyecto` y `hogar` en `AJUSTES`. |
 | `Cloud Firestore API has not been used in project …` | Copiá el mensaje completo y mandáselo a quien mantiene la app. |
 | `Se requiere autorización` | Volvé a correr `probarMesSinGuardar` y aceptá los permisos. |
-| `Se llegó al tope de 300 correos` | Afiná `filtro` con el remitente del banco para no revisar correos que no son avisos. |
+| `No alcanzó el tiempo: falta desde el …` | Es normal con muchos correos: la siguiente revisión automática sigue desde ahí. Si corriste la función a mano, esperá 5 minutos. |
+| Faltan avisos de un banco que no está en la lista | Agregá su remitente en `remitentes` (ver Ajustes opcionales) o mandá un ejemplo a quien mantiene la app. |
 
 ## Cómo funciona por dentro
 
