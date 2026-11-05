@@ -7,7 +7,13 @@ import { escaparHtml as esc, dinero, porcentaje, redondear, aNumero } from '../u
 import { fechaCorta, leerFecha, mesDe, nombreDelMes, sumarMeses } from '../utils/fechas.js';
 import { resumenDelMes, gastosDelMes } from '../domain/presupuesto.js';
 import { TIPOS_INGRESO } from '../constants/catalogos.js';
-import { estadoDelLector, MINUTOS_ENTRE_REVISIONES, MINUTOS_SIN_NOTICIAS } from '../domain/lector.js';
+import {
+  estadoDelLector,
+  MINUTOS_ENTRE_REVISIONES,
+  MINUTOS_SIN_NOTICIAS,
+  planDeRelectura,
+  relecturaVacia,
+} from '../domain/lector.js';
 import { movimientosDelMes } from '../domain/cuentas.js';
 import { idDeTarjeta } from '../domain/tarjetas.js';
 import { boton, bloqueVacio, chip, enlacePestana, filaMovimiento, filaPago, textoMedio } from '../ui/componentes.js';
@@ -15,7 +21,14 @@ import { ICONOS } from '../ui/iconos.js';
 import { avisar } from '../ui/aviso.js';
 import { confirmarEnBoton } from '../ui/confirmar.js';
 import { cambiar, leer } from '../state/store.js';
-import { borrarGasto, borrarMovimiento, observarMes, pedirRevisionDeCorreos } from '../data/repositorio.js';
+import {
+  borrarGasto,
+  borrarMovimiento,
+  observarMes,
+  pedirRevisionDeCorreos,
+  releerCorreosDelMes,
+} from '../data/repositorio.js';
+import { abrirFormulario } from '../ui/formulario.js';
 
 function navegacion(mes, hoy) {
   const esActual = mes === mesDe(hoy);
@@ -174,10 +187,16 @@ function seccionLector(estado, mes, hoy) {
   const boton = esFuturo
     ? ''
     : `<button type="button" class="boton boton--principal" data-accion="revisar-correos" data-mes="${mes}"${lector.ocupado ? ' disabled' : ''}>${lector.ocupado ? 'Revisando los correos…' : `Buscar lo de ${nombre} en los correos`}</button>`;
+  // Volver a leer desde cero: solo si el lector ya anotó (o borraron) algo este mes.
+  const releer =
+    esFuturo || lector.ocupado || relecturaVacia(planDeRelectura(estado.datos, mes))
+      ? ''
+      : `<button type="button" class="boton boton--fantasma boton--chico" data-accion="releer-correos" data-mes="${mes}">Borrar lo leído de ${nombre} y volver a leer</button>`;
   return `<section class="seccion">
     <div class="seccion__cabecera"><h2 class="seccion__titulo">Avisos del banco</h2></div>
     <p class="nota">Las compras con tarjeta y las transferencias que el banco avisa por correo se anotan solas. Si falta algo de ${nombre}, pidan que se revisen todos los correos del mes: no se repite lo que ya está.</p>
     ${boton}
+    ${releer}
     <ul class="lista">${cuentas}</ul>
     ${seccionPendientes(pendientes)}
     ${repetidos.length ? `<p class="nota nota--aviso"><b>Revisen ${repetidos.length === 1 ? 'esto' : 'estos'}:</b> ${repetidos.length === 1 ? 'parece' : 'parecen'} anotado${repetidos.length === 1 ? '' : 's'} a mano también (${esc(repetidos.join('; '))}). Están marcados con "¿Repetido?" en los gastos o en los movimientos; si sobra, tóquenlo y elimínenlo.</p>` : ''}
@@ -244,6 +263,28 @@ export const acciones = {
   'revisar-correos': (boton) => {
     pedirRevisionDeCorreos(boton.dataset.mes);
     avisar('Pedido enviado. En unos minutos aparece lo que falte.', 4000);
+  },
+  'releer-correos': (boton) => {
+    const { mes } = boton.dataset;
+    const nombre = nombreDelMes(mes).split(' ')[0];
+    const { conteo } = planDeRelectura(leer().datos, mes);
+    const partes = [
+      conteo.gastos ? `${conteo.gastos} ${conteo.gastos === 1 ? 'gasto' : 'gastos'}` : '',
+      conteo.movimientos ? `${conteo.movimientos} ${conteo.movimientos === 1 ? 'transferencia' : 'transferencias'}` : '',
+      conteo.pagos ? `${conteo.pagos} ${conteo.pagos === 1 ? 'gasto fijo marcado' : 'gastos fijos marcados'}` : '',
+    ].filter(Boolean);
+    abrirFormulario({
+      titulo: `Volver a leer ${nombre}`,
+      intro: `Se borra lo que el lector anotó de los correos de ${nombre}${partes.length ? ` (${partes.join(', ')})` : ''}, también lo que ya habían borrado, y se devuelven sus saldos. Lo que anotaron a mano se queda. Después cada lector vuelve a leer los correos de ${nombre}: en unos minutos aparece todo otra vez.`,
+      campos: [],
+      textoGuardar: 'Borrar y volver a leer',
+      alGuardar: () => {
+        avisar('Borrando lo leído…');
+        releerCorreosDelMes(mes)
+          .then(() => avisar(`Listo. En unos minutos se vuelven a leer los correos de ${nombre}.`, 5000))
+          .catch(() => avisar('No se pudo borrar. Revisen la conexión e intenten otra vez.', 5000));
+      },
+    });
   },
   'mes-anterior': () => cambiarMes(sumarMeses(leer().mesVista, -1)),
   'mes-siguiente': () => cambiarMes(sumarMeses(leer().mesVista, 1)),

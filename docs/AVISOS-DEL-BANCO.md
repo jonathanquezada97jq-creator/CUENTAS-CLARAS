@@ -135,6 +135,14 @@ Si una cuenta dice **Apagado**, su lector no ha revisado en más de 30 minutos: 
 
 Los gastos y transferencias del correo que se eliminan en la app no vuelven a aparecer al revisar de nuevo el mes.
 
+### Volver a leer un mes desde cero
+
+Si borraron por error lo que vino del correo (o quieren que el lector lo lea otra vez después de una actualización), en **Pagos → Avisos del banco** tocá **Borrar lo leído de (mes) y volver a leer**:
+
+- Se borra lo que anotó el lector ese mes (gastos, transferencias y gastos fijos marcados), también lo que ya habían borrado, y se devuelven sus saldos.
+- Lo anotado a mano se queda; solo se le quita el aviso enlazado, para que el lector lo vuelva a enlazar en lugar de repetirlo.
+- Después cada lector vuelve a leer los correos de ese mes y en unos minutos aparece todo otra vez.
+
 ## Actualizar un lector que ya estaba instalado
 
 Cuando cambia `apps-script/Codigo.gs`:

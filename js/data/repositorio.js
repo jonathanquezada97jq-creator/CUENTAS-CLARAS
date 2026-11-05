@@ -35,6 +35,7 @@ import {
 } from './firebase.js';
 import { cambiar, leer, COLECCIONES } from '../state/store.js';
 import { planificarPago } from '../domain/presupuesto.js';
+import { planDeRelectura } from '../domain/lector.js';
 import { referenciaTarjeta } from '../domain/tarjetas.js';
 import {
   cambiosDeSaldo,
@@ -482,6 +483,40 @@ export async function importarRespaldo(objeto) {
 }
 
 /** Borra todos los datos del hogar. */
+/**
+ * Borra lo que el lector de correos anotó en el mes y le pide que lo vuelva
+ * a leer (ver planDeRelectura): sirve si borraron por error lo que vino del
+ * correo, o si el lector se equivocó y ya se corrigió. Los saldos se
+ * devuelven en la misma escritura que borra; lo anotado a mano se queda.
+ * @returns {Promise<import('../domain/lector.js').PlanDeRelectura>}
+ */
+export async function releerCorreosDelMes(mes) {
+  const plan = planDeRelectura(leer().datos, mes);
+  const operaciones = [
+    ...plan.borrarGastos.map((id) => (lote) => lote.delete(refDocumento('gastos', id))),
+    ...plan.desenlazarGastos.map((id) => (lote) => lote.update(refDocumento('gastos', id), { correoId: deleteField() })),
+    ...plan.borrarMovimientos.map((id) => (lote) => lote.delete(refDocumento('movimientos', id))),
+    ...plan.desenlazarMovimientos.map(
+      (id) => (lote) => lote.update(refDocumento('movimientos', id), { referencias: deleteField(), lados: deleteField() }),
+    ),
+  ];
+  const pagados = {};
+  plan.desmarcarPagos.forEach((clave) => {
+    pagados[clave] = deleteField();
+  });
+  plan.desenlazarPagos.forEach((clave) => {
+    pagados[clave] = { correo: deleteField() };
+  });
+  if (Object.keys(pagados).length) {
+    operaciones.push((lote) => lote.set(refDocumento('meses', mes), { pagados }, { merge: true }));
+  }
+  // Los saldos van en el último lote, junto con lo último que se borra.
+  operaciones.push((lote) => escribirSaldos(lote, plan.saldos));
+  await escribirEnLotes(operaciones);
+  pedirRevisionDeCorreos(mes);
+  return plan;
+}
+
 export async function borrarTodo() {
   const nombres = [...COLECCIONES_PRINCIPALES, 'meses', ...COLECCIONES_POR_MES];
   const fotos = await Promise.all(nombres.map((n) => getDocs(refColeccion(n))));

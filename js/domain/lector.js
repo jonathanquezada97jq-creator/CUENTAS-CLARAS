@@ -12,6 +12,8 @@
  *   (nuevos = gastos nuevos; movimientos = transferencias nuevas)
  */
 
+import { cambiosDeSaldo, combinarEfectos, efectoDeMedio, efectosDeMovimiento, efectosVacios } from './cuentas.js';
+
 /** Debe coincidir con AJUSTES.minutosEntreRevisiones del script. */
 export const MINUTOS_ENTRE_REVISIONES = 5;
 
@@ -89,3 +91,93 @@ export function estadoDelLector(lector, mes, ahora) {
   );
   return { instalado: cuentas.length > 0, pedido, ocupado, cuentas };
 }
+
+/* ------------------------------------------------------------------ */
+/* Borrar lo leído de un mes para que el lector lo vuelva a leer       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * @typedef {Object} PlanDeRelectura
+ * @property {string[]} borrarGastos  Ids de gastos que vinieron del correo (también los ya borrados).
+ * @property {string[]} desenlazarGastos  Gastos anotados a mano: se les quita el aviso enlazado.
+ * @property {string[]} borrarMovimientos
+ * @property {string[]} desenlazarMovimientos
+ * @property {string[]} desmarcarPagos  Claves de pagos que marcó el lector (gastos fijos).
+ * @property {string[]} desenlazarPagos  Pagos marcados a mano con un aviso enlazado.
+ * @property {{cuentas: {id:string, deltaSaldo:number}[], tarjetas: {id:string, deltaSaldo:number}[]}} saldos
+ *   Lo que se devuelve a cada cuenta y tarjeta.
+ * @property {{gastos:number, movimientos:number, pagos:number}} conteo  Lo que se va a volver a leer (visible).
+ */
+
+/**
+ * Qué hay que hacer para que el lector vuelva a leer un mes desde cero:
+ *   - Lo que anotó el lector se borra y se devuelve su saldo. Lo que ya se
+ *     había borrado en la app (queda "descartado" para que no vuelva) se borra
+ *     del todo, así el lector lo puede anotar otra vez.
+ *   - Los gastos fijos que marcó el lector se desmarcan (y se devuelve el saldo).
+ *   - Lo anotado a mano se queda; solo se le quita el aviso enlazado, para
+ *     que el lector lo vuelva a enlazar en lugar de repetirlo.
+ * @param {Object} datos  Estado de la app (con todos los gastos y movimientos del mes, incluso los descartados).
+ * @param {string} mes  "YYYY-MM".
+ * @returns {PlanDeRelectura}
+ */
+export function planDeRelectura(datos, mes) {
+  const plan = {
+    borrarGastos: [],
+    desenlazarGastos: [],
+    borrarMovimientos: [],
+    desenlazarMovimientos: [],
+    desmarcarPagos: [],
+    desenlazarPagos: [],
+    conteo: { gastos: 0, movimientos: 0, pagos: 0 },
+  };
+  const efectos = [efectosVacios()];
+
+  (datos.gastos?.[mes] ?? []).forEach((g) => {
+    if (g.origen === 'correo') {
+      plan.borrarGastos.push(g.id);
+      // Al borrarlo en la app ya se había devuelto su saldo; si sigue visible, se devuelve ahora.
+      if (!g.descartado) {
+        efectos.push(efectoDeMedio(g.medio, g.monto, -1));
+        plan.conteo.gastos += 1;
+      }
+    } else if (g.correoId) {
+      if (g.descartado) plan.borrarGastos.push(g.id);
+      else plan.desenlazarGastos.push(g.id);
+    }
+  });
+
+  (datos.movimientos?.[mes] ?? []).forEach((m) => {
+    const enlazado = (m.referencias?.length ?? 0) > 0 || (m.lados?.length ?? 0) > 0;
+    if (m.origen === 'correo') {
+      plan.borrarMovimientos.push(m.id);
+      if (!m.descartado) {
+        efectos.push(efectosDeMovimiento(m, -1));
+        plan.conteo.movimientos += 1;
+      }
+    } else if (enlazado) {
+      if (m.descartado) plan.borrarMovimientos.push(m.id);
+      else plan.desenlazarMovimientos.push(m.id);
+    }
+  });
+
+  Object.entries(datos.pagados?.[mes] ?? {}).forEach(([clave, pago]) => {
+    if (!pago) return;
+    if (pago.origen === 'correo') {
+      plan.desmarcarPagos.push(clave);
+      if (pago.monto !== undefined) efectos.push(efectoDeMedio(pago.medio, pago.monto, -1));
+      plan.conteo.pagos += 1;
+    } else if (pago.correo) {
+      plan.desenlazarPagos.push(clave);
+    }
+  });
+
+  plan.saldos = cambiosDeSaldo(combinarEfectos(...efectos), datos);
+  return plan;
+}
+
+/** Si el plan no tiene nada que hacer. */
+export const relecturaVacia = (plan) =>
+  ['borrarGastos', 'desenlazarGastos', 'borrarMovimientos', 'desenlazarMovimientos', 'desmarcarPagos', 'desenlazarPagos'].every(
+    (lista) => plan[lista].length === 0,
+  );
